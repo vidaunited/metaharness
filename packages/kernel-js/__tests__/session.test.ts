@@ -216,6 +216,65 @@ describe('SessionLog (ADR-246 §2.3)', () => {
     expect(lines[2]).toBe('{"index":1,"branch":"side","kind":"note","payload":null}');
   });
 
+  it('an append through a fork sibling retires the shared memoised lineage (both directions)', async () => {
+    // lineage() is memoised on the SHARED LogState (fork() siblings share
+    // it) and validated by the append-only log length — so an append via
+    // either instance must be visible to the other's next replay().
+    const path = join(await tmp(), 'session.jsonl');
+    const main = new SessionLog(path);
+    for (let i = 0; i < 3; i++) await main.append('turn', { i });
+    const side = await main.fork(1, 'side');
+
+    // Warm the cache from BOTH instances for BOTH branches.
+    expect(main.replay('side').eventCount).toBe(3); // main[0..1] + fork event
+    expect(side.replay('main').eventCount).toBe(3);
+
+    // The fork appends → the parent instance's cached 'side' lineage is stale.
+    await side.append('turn', { via: 'side' });
+    expect(main.replay('side').eventCount).toBe(4);
+    expect(main.stateHash('side')).toBe(side.stateHash('side'));
+
+    // The parent appends → the fork instance's cached 'main' lineage is stale.
+    await main.append('turn', { via: 'main' });
+    expect(side.replay('main').eventCount).toBe(4);
+    expect(side.stateHash('main')).toBe(main.stateHash('main'));
+
+    // Warm (memoised) results equal a cold resume from disk, and repeat calls
+    // are stable.
+    const resumed = await SessionLog.open(path);
+    for (const b of ['main', 'side']) {
+      expect(main.replay(b)).toEqual(resumed.replay(b));
+      expect(main.replay(b)).toEqual(main.replay(b));
+    }
+  });
+
+  it('multi-branch replay + stateHash match the values pinned before lineage memoisation', async () => {
+    // Golden values were produced by the pre-memoisation implementation over
+    // this exact log; the memoised path must stay byte-identical, warm or cold.
+    const path = join(await tmp(), 'session.jsonl');
+    const main = new SessionLog(path);
+    for (let i = 0; i < 4; i++) await main.append('turn', { i, text: `main ${i}` });
+    const side = await main.fork(2, 'side');
+    await side.append('turn', { i: 3, via: 'side' });
+    await main.append('turn', { i: 4, via: 'main' });
+    const leaf = await side.fork(1, 'leaf');
+    await leaf.append('note', { z: [1, { y: 'x' }] });
+    await side.append('turn', { i: 5, via: 'side' });
+
+    const golden = {
+      main: { eventCount: 5, stateHash: 'f4cff2a87e7f7c220d364f522a3517d4aee9d1778d44f62ef0b78ace79ceef21' },
+      side: { eventCount: 6, stateHash: '557c61a864fd07a7f106a515a0204cfa60a39ce750c69e5e83a3fc329beec9c0' },
+      leaf: { eventCount: 7, stateHash: '587db626d7e470f7520651398082ecd99915c111778f548dd58b9020c98ebb36' },
+    };
+    const resumed = await SessionLog.open(path); // cold cache
+    for (const [b, want] of Object.entries(golden)) {
+      expect(main.replay(b)).toEqual(want); // warm: first call fills the cache…
+      expect(main.replay(b)).toEqual(want); // …second call is served from it
+      expect(leaf.stateHash(b)).toBe(want.stateHash); // sibling instance, shared cache
+      expect(resumed.replay(b)).toEqual(want);
+    }
+  });
+
   it('reproduces the committed cross-language hash fixture', async () => {
     // The Rust mirror pins the SAME fixture — the fold definition in
     // src/session.ts must keep producing exactly this hash.

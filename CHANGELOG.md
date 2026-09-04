@@ -4,6 +4,65 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Changed — system performance pass (2026-09-04)
+
+- **`@metaharness/agntcy` moved outside the root npm workspace** (ADR-240
+  §5 update). Its `agntcy-dir` dependency resolves three `@buf/*` packages
+  from the Buf Schema Registry; with the package in `"workspaces":
+  ["packages/*"]` they sat in the root lockfile, so `npm ci` failed anywhere
+  `buf.build` is unreachable — an *optional* peer package was breaking the
+  whole workspace install. Root `package.json` now has `"!packages/agntcy"`,
+  the root `package-lock.json` is regenerated with no `@buf/*` / `agntcy-dir`
+  entries (clean `npm ci` from npmjs only), and the package installs, builds
+  and tests on its own inside `packages/agntcy` (its own `.npmrc`, no
+  committed lockfile; root scripts `install:agntcy` / `test:agntcy`; a
+  dedicated CI step replaces the workspace fan-out that no longer reaches
+  it). `scripts/pack-all.mjs` packs an excluded package only when it has been
+  installed separately; `scripts/install-all.mjs` copies the package's
+  `.npmrc` (not a root one) into the throwaway project only when an agntcy
+  tarball is in the set.
+- **`@ruvnet/agent-harness-generator` depends on `metaharness@^0.4.6`** (was
+  the stale exact pin `0.1.5`; the workspace CLI is 0.4.6).
+- **Perf regression gate is now a HARD gate** (`ci.yml` bench job; was
+  `continue-on-error: true` since iter 54). `scripts/bench-baseline.mjs`
+  gains `--keys=<k1,k2>` (compare only the listed leaf metric keys) and
+  `--abs-floor=<n>` (a regression must ALSO move by more than `n` in the
+  metric's own units, not just by more than `--threshold` relatively); CI
+  runs `--threshold=50 --keys=meanMs,p50Ms --abs-floor=0.05`, so tail
+  statistics (p95/p99/elapsedMs) and sub-50µs jitter on the 0.0002–0.007ms
+  host-baseline means can no longer fail a build while a real 10–100× slowdown
+  still does. Defaults are unchanged (relative-only, every metric — the DRACO
+  gate in `draco.yml` is unaffected). One behaviour change: a comparison
+  that matches zero metrics now exits 1 instead of passing on an empty set.
+  `__tests__/bench-baseline.test.ts` grows 8 cases for the new logic.
+- **darwin-mode `mapLimit` end-to-end tests run in CI again** — both
+  `__tests__/perf/concurrency.perf.test.ts` (was a `conMs < seqMs * 0.7`
+  wall-clock ratio) and `__tests__/perf/mapLimit.test.ts` (was overlap
+  inferred from 80ms-sleep timestamps) were `it.skipIf(CI)` because shared
+  runners defeated the timing. They now share `__tests__/perf/rendezvous-fixture.ts`:
+  each child evaluation blocks at a barrier until `width` of them have begun,
+  so `maxOverlap === width` is a logical fact, not a timing one (a sequential
+  evaluation can only ever produce 1 plus barrier timeouts). The CI skip is
+  removed on both; all paths the fixture touches are absolute and outside the
+  fixture repo (the Windows ENOENT class).
+- **`SessionLog` lineage/replay memoised** (`packages/kernel-js/src/session.ts`,
+  ADR-246 §2.3). `lineage()` filtered and re-sorted the whole event array
+  (recursing through every fork) on every call and `replay()` called it
+  twice; the state-hash fold then re-hashed the whole lineage each time.
+  Lineage + its hash are now cached per branch on the SHARED `LogState`
+  (fork() siblings share it), validated by the append-only `events.length`,
+  so any append through any sibling retires the entry. `replay()` resolves
+  the lineage once. Hash output is byte-identical (the committed
+  cross-language fixture and new pinned multi-branch golden values pass);
+  1,000 `replay()` calls on a 5,000-event / 4-branch log: 13,287ms → 0.1ms
+  warm; a replay straight after an append still pays one full fold (~13ms,
+  unchanged).
+- **`poker-darwin` tests build optimised** (`Cargo.toml`
+  `[profile.dev.package.poker-darwin] opt-level = 3`, inherited by `cargo
+  test`): the CFR training loops in its tests dominated the Rust CI job
+  (16 min ubuntu / 42 min windows; one test alone 190s unoptimised). No test
+  budget was weakened or ignored.
+
 ### Added — Prime Agent integration, ADR-246/242 (2026-08-06)
 
 - **`@metaharness/host-prime-agent`** (`packages/host-prime-agent/`) — the

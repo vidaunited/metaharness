@@ -140,6 +140,19 @@ jobs:
         run: npm run build
       - name: TypeScript tests
         run: npm test
+      - name: Optional peer package @metaharness/agntcy (outside the root workspace — ADR-240 §5)
+        # agntcy is excluded from the root workspace (`!packages/agntcy`) because
+        # its `agntcy-dir` dependency resolves `@buf/*` packages from the Buf
+        # Schema Registry, which made `npm ci` impossible wherever buf.build is
+        # unreachable. `npm test` above therefore no longer covers it; install,
+        # build and test it explicitly here (buf.build IS reachable from GitHub
+        # runners). Node 20 × ubuntu only — the package is pure TS, no native or
+        # platform-specific surface, so the full matrix would be redundant.
+        if: matrix.os == 'ubuntu-latest' && matrix.node == '20'
+        shell: bash
+        run: |
+          npm run install:agntcy
+          npm run test:agntcy
       - name: Root test suite (__tests__/ — cross-package + config drift guards)
         # `npm test` only fans out to per-workspace suites (`npm run -ws test`),
         # so the root __tests__/ files — plugin/codex/workflow drift guards,
@@ -283,11 +296,15 @@ jobs:
         # to compare against next run.
         run: BENCH_HOST_ITERS=1000 BENCH_HOST_OUT=./host-bench-report.json npm --prefix packages/bench run bench:hosts
       - name: Perf regression gate (iter 53)
-        # Soft-gate for now: report regressions but DON'T fail the
-        # build, since CI runners have non-deterministic perf. The
-        # signal is still useful in the logs.
-        continue-on-error: true
-        run: node scripts/bench-baseline.mjs --current=packages/bench/host-bench-report.json --baseline=packages/bench/host-baseline.json --threshold=50
+        # HARD gate (was `continue-on-error: true` from iter 54 → now). It stays
+        # non-flaky by comparing a noise-robust statistic only: `--keys` limits
+        # the comparison to meanMs/p50Ms (p95/p99/elapsedMs are tail noise on a
+        # shared runner), and `--abs-floor=0.05` requires the regression to ALSO
+        # be > 50µs per call in absolute terms — the baseline means are
+        # 0.0002–0.007ms, where a 50% relative swing is jitter, not a signal.
+        # A real regression (an extra fs call / sync loop per config-gen) is
+        # 10–100× that floor and still fails the build.
+        run: node scripts/bench-baseline.mjs --current=packages/bench/host-bench-report.json --baseline=packages/bench/host-baseline.json --threshold=50 --keys=meanMs,p50Ms --abs-floor=0.05
       - name: Upload bench reports
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

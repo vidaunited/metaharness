@@ -68,13 +68,15 @@ writeFileSync(join(project, 'package.json'), JSON.stringify({
 
 // @metaharness/agntcy depends transitively on `agntcy-dir`'s
 // `@buf/agntcy_dir.bufbuild_es`, which only exists on the Buf Schema
-// Registry, not the default npm registry. The repo root carries an
-// `.npmrc` with the `@buf:registry` scope mapping for exactly this reason
-// (see ADR-240 §2.2) — but this throwaway project lives under os.tmpdir(),
-// outside the repo, so npm never sees it unless we copy it in.
-const rootNpmrc = join(root, '.npmrc');
-if (existsSync(rootNpmrc)) {
-  writeFileSync(join(project, '.npmrc'), readFileSync(rootNpmrc, 'utf8'));
+// Registry, not the default npm registry. The package (which lives OUTSIDE
+// the root workspace for exactly this reason — ADR-240 §5, `!packages/agntcy`
+// in the root package.json) carries an `.npmrc` with the `@buf:registry`
+// scope mapping — but this throwaway project lives under os.tmpdir(),
+// outside the repo, so npm never sees it unless we copy it in. Only needed
+// when pack-all actually packed agntcy (it skips it unless installed).
+const agntcyNpmrc = join(root, 'packages', 'agntcy', '.npmrc');
+if (tarballs.some(t => t.includes('agntcy')) && existsSync(agntcyNpmrc)) {
+  writeFileSync(join(project, '.npmrc'), readFileSync(agntcyNpmrc, 'utf8'));
 }
 
 console.log(`Project: ${project}`);
