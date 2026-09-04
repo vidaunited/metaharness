@@ -11,7 +11,7 @@ import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { probeNpmAuditEndpoint } from './npm-audit-endpoint.js';
+import { probeNpmAuditEndpoint, registryFailureSignature, NPM_FAIL_FAST_ENV } from './npm-audit-endpoint.js';
 
 const execFile = promisify(execFileCb);
 
@@ -23,10 +23,12 @@ if (!endpoint.ok) console.warn(`[audit-deps.test] skipping live npm audit: ${end
 const ROOT = process.cwd();
 const SCRIPT = join(ROOT, 'scripts', 'audit-deps.mjs');
 
-async function run(args: string[] = []): Promise<{ code: number; stdout: string; stderr: string }> {
+async function run(args: string[] = [], env: Record<string, string> = {}): Promise<{ code: number; stdout: string; stderr: string }> {
   try {
+    // The script spawns `npm audit` with no explicit env, so anything set here
+    // (npm_config_* fail-fast knobs, a bogus registry) reaches npm itself.
     const r = await execFile('node', [SCRIPT, ...args], {
-      cwd: ROOT, windowsHide: true, maxBuffer: 1024 * 1024 * 16,
+      cwd: ROOT, windowsHide: true, maxBuffer: 1024 * 1024 * 16, env: { ...process.env, ...env },
     });
     return { code: 0, stdout: r.stdout, stderr: r.stderr };
   } catch (e) {
@@ -102,22 +104,51 @@ describe('scripts/audit-deps.mjs', () => {
   }, 60_000);
 });
 
-// The live signal — the actual gate. Skipped ONLY when the advisory endpoint
-// is down (probe above); a real high+ advisory in either lockfile fails here
-// exactly as it fails CI's security workflow.
+// Offline, deterministic: a registry that cannot be reached must NEVER read as
+// ALL CLEAN. npm answers `{message: "... ECONNREFUSED ...", error: {}}` (no
+// metadata) against a refused local port — the same envelope a 503 / fetch
+// timeout produces — and the script used to count that as 0 advisories.
+describe('scripts/audit-deps.mjs — fails closed when npm cannot reach the registry', () => {
+  it('reports FAIL "did not complete" + exit 1 (never PASS/ALL CLEAN) on a refused registry', async () => {
+    const r = await run(['--skip-cargo', '--skip-extra'], { ...NPM_FAIL_FAST_ENV, npm_config_registry: 'http://127.0.0.1:9' });
+    expect(r.code, `stderr:\n${r.stderr}`).toBe(1);
+    expect(r.stderr).toMatch(/FAIL: npm\(workspace\) — npm audit did not complete/);
+    expect(r.stderr).not.toMatch(/PASS: npm|ALL CLEAN/);
+    expect(registryFailureSignature(r.stderr)).toMatch(/ECONNREFUSED|127\.0\.0\.1:9/);
+  }, 60_000);
+});
+
+// The live signal — the actual gate. Skipped when the advisory endpoint is
+// down at PROBE time (describe.skipIf); and, because the registry can answer
+// the probe then hang/503 the real call (npm ≤10.8's legacy /audits/quick
+// endpoint has been degraded for whole days), each run is bounded by the
+// fail-fast env and skipped via ctx.skip() — not passed — when its OWN output
+// carries a registry-failure signature. A real high+ advisory in either
+// lockfile still fails here exactly as it fails CI's security workflow.
 describe.skipIf(!endpoint.ok)('scripts/audit-deps.mjs — live npm audit (endpoint reachable)', () => {
-  it('runs real npm audit against the workspace and reports 0 advisories at high+', async () => {
-    const r = await run(['--skip-cargo', '--skip-extra']);
+  function skipIfRegistryFailed(ctx: { skip: () => void }, r: { code: number; stderr: string }, label: string): void {
+    if (r.code === 0) return;
+    const sig = registryFailureSignature(r.stderr);
+    if (sig) {
+      console.warn(`[audit-deps.test] registry failed mid-run — skipping ${label}: ${sig}`);
+      ctx.skip();
+    }
+  }
+
+  it('runs real npm audit against the workspace and reports 0 advisories at high+', async (ctx) => {
+    const r = await run(['--skip-cargo', '--skip-extra'], { ...NPM_FAIL_FAST_ENV });
+    skipIfRegistryFailed(ctx, r, 'workspace audit');
     expect(r.code, `stderr:\n${r.stderr}`).toBe(0);
-    expect(r.stderr).toMatch(/PASS: npm/);
+    expect(r.stderr).toMatch(/PASS: npm\(workspace\)/);
     expect(r.stderr).toMatch(/ALL CLEAN/);
-  }, 180_000);
+  }, 120_000);
 
   // iter 61 — extra-scan coverage of apps/web-ui (outside the workspace)
-  it('real npm audit covers apps/web-ui (0 advisories at high+)', async () => {
+  it('real npm audit covers apps/web-ui (0 advisories at high+)', async (ctx) => {
     if (!existsSync(join(ROOT, 'apps', 'web-ui', 'package-lock.json'))) return;
-    const r = await run(['--skip-cargo']);
+    const r = await run(['--skip-cargo'], { ...NPM_FAIL_FAST_ENV });
+    skipIfRegistryFailed(ctx, r, 'apps/web-ui audit');
     expect(r.code, `stderr:\n${r.stderr}`).toBe(0);
     expect(r.stderr).toMatch(/PASS: npm\(apps\/web-ui\)/);
-  }, 240_000);
+  }, 180_000);
 });

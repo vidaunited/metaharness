@@ -21,7 +21,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { evolve, mapLimit } from '../../src/evolve.js';
 import type { EvolutionConfig } from '../../src/types.js';
-import { makeRendezvousRepo, readRendezvous } from './rendezvous-fixture.js';
+import { makeRendezvousRepo, readRendezvous, sandboxDiagnostics } from './rendezvous-fixture.js';
 
 describe('mapLimit primitive — width bound + order (unit)', () => {
   it('never exceeds the concurrency width and preserves input order', async () => {
@@ -70,7 +70,13 @@ describe('mapLimit primitive — width bound + order (unit)', () => {
  * `npm` startups on a loaded runner, and under the sandbox's 30s task timeout. */
 const BARRIER_TIMEOUT_MS = 20_000;
 
-describe('evolve mapLimit — width bound through the real sandbox path', () => {
+// win32: the real sandbox cannot start the profiler-resolved `npm test` at all
+// (execFile with no shell cannot run `npm.cmd`; every evaluation is recorded as
+// a silent exitCode-1 trace and no child process ever exists — CI run
+// 33868034552 saw `markers.log` ENOENT after a 319ms evolve). The primitive
+// test above still runs on Windows; the e2e variant skips like
+// tier2-sandbox.e2e.test.ts. Details in rendezvous-fixture.ts.
+describe.skipIf(process.platform === 'win32')('evolve mapLimit — width bound through the real sandbox path', () => {
   const dirs: string[] = [];
   beforeEach(() => {
     dirs.length = 0;
@@ -110,9 +116,11 @@ describe('evolve mapLimit — width bound through the real sandbox path', () => 
         `[mapLimit] concurrency=${concurrency} children=${children} begun=${rv.begun} maxOverlap=${rv.maxOverlap} timedOut=${rv.timedOut}`,
       );
 
-      expect(rv.timedOut).toBe(0); // nobody gave up at the barrier
-      expect(rv.begun).toBe(children); // every child evaluation ran
-      expect(rv.maxOverlap).toBe(concurrency); // proves overlap AND the width bound
+      // On any failure, say what the sandbox actually recorded per evaluation.
+      const why = await sandboxDiagnostics(work);
+      expect(rv.begun, `every child must reach the barrier — ${why}`).toBe(children);
+      expect(rv.timedOut, `no child may give up waiting — ${why}`).toBe(0); // nobody gave up at the barrier
+      expect(rv.maxOverlap, why).toBe(concurrency); // proves overlap AND the width bound
     },
     90_000,
   );

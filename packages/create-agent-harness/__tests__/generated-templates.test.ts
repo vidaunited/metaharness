@@ -78,6 +78,11 @@ describe('catalog.json', () => {
 });
 
 describe('generated templates scaffold cleanly', () => {
+  // Each case writes a whole harness to disk. On a cold Windows runner one
+  // scaffold has been measured at 5.02 s against vitest's 5 s default (the same
+  // file ran in 2.4 s on the sibling Node 22 job), so give the I/O-bound cases
+  // an explicit budget instead of letting disk latency decide the verdict.
+  const SCAFFOLD_TIMEOUT_MS = 30_000;
   for (const t of generated) {
     it(`${t.id} -> renders with no unresolved vars`, async () => {
       const root = await mkdtemp(join(tmpdir(), 'gen-tpl-'));
@@ -173,7 +178,7 @@ describe('generated templates scaffold cleanly', () => {
         const stripped = '#!/usr/bin/env node\nexport const x = 1;\n'.replace(/^#![^\n]*/, '');
         expect(() => new Function(stripped.replace(/export /g, ''))).not.toThrow();
       }
-    });
+    }, SCAFFOLD_TIMEOUT_MS);
   }
 });
 

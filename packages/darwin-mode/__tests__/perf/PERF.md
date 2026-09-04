@@ -41,9 +41,18 @@ the CPU):
 | 2   | 602 ms                 | 4     | 4          | 0        |
 | 3   | 551 ms                 | 4     | 4          | 0        |
 
-Asserted: `timedOut === 0`, `begun === 4`, `maxOverlap === 4`. Wall-clock is
-logged for local inspection, never asserted. Conclusion: concurrency is real and
-bounded, and the test runs on CI.
+Asserted: `begun === 4`, `timedOut === 0`, `maxOverlap === 4` (each with the
+sandbox's per-evaluation traces as the failure message). Wall-clock is logged
+for local inspection, never asserted. Conclusion: concurrency is real and
+bounded, and the test runs on Linux/macOS CI.
+
+**Windows:** both e2e tests `describe.skipIf(win32)`. The real sandbox runs the
+profiler-resolved `npm test` with `execFile` and no shell, which cannot start
+`npm.cmd` on Windows; the spawn error is recorded as an ordinary exitCode-1
+trace and no child process is ever created (CI run 33868034552: the whole
+evolve finished in 211ms — five `npm` starts take ≥1s — and `markers.log` was
+never written). That is a sandbox property, not a fixture one; lifting the skip
+means teaching `src/sandbox.ts` to launch `.cmd` runners on win32.
 
 ## 2. `mapLimit` width bound + order (`mapLimit.test.ts`)
 

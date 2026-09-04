@@ -43,8 +43,15 @@ All notable changes to this project are documented here. Format follows [Keep a 
   each child evaluation blocks at a barrier until `width` of them have begun,
   so `maxOverlap === width` is a logical fact, not a timing one (a sequential
   evaluation can only ever produce 1 plus barrier timeouts). The CI skip is
-  removed on both; all paths the fixture touches are absolute and outside the
-  fixture repo (the Windows ENOENT class).
+  removed on both for Linux/macOS; all paths the fixture touches are
+  absolute, baked into the child script (the sandbox scrubs env and fixes
+  argv), and pre-created by the parent. On **Windows** the two e2e variants
+  `skipIf(win32)` instead: the real sandbox runs `npm test` via `execFile`
+  with no shell, which cannot start `npm.cmd`, so every evaluation is a
+  silent exitCode-1 trace and no child ever runs (CI run 33868034552 —
+  `markers.log` ENOENT after a 211ms evolve). The assertion messages now
+  include the sandbox's per-evaluation traces so that class is
+  self-diagnosing.
 - **`SessionLog` lineage/replay memoised** (`packages/kernel-js/src/session.ts`,
   ADR-246 §2.3). `lineage()` filtered and re-sorted the whole event array
   (recursing through every fork) on every call and `replay()` called it

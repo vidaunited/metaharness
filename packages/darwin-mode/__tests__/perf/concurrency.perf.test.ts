@@ -21,13 +21,18 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { evolve } from '../../src/evolve.js';
 import type { EvolutionConfig } from '../../src/types.js';
-import { makeRendezvousRepo, readRendezvous } from './rendezvous-fixture.js';
+import { makeRendezvousRepo, readRendezvous, sandboxDiagnostics } from './rendezvous-fixture.js';
 
 /** Barrier wait ceiling per child — generous for C concurrent `npm` startups
  * on a loaded runner, and well under the sandbox's 30s task timeout. */
 const BARRIER_TIMEOUT_MS = 20_000;
 
-describe('evolve — bounded concurrency overlaps work', () => {
+// win32: the real sandbox cannot start the profiler-resolved `npm test` at all
+// (execFile with no shell cannot run `npm.cmd`; every evaluation is recorded as
+// a silent exitCode-1 trace and no child process ever exists — CI run
+// 33868034552 saw the whole evolve finish in 211ms and `markers.log` ENOENT).
+// Same precedent as tier2-sandbox.e2e.test.ts; details in rendezvous-fixture.ts.
+describe.skipIf(process.platform === 'win32')('evolve — bounded concurrency overlaps work', () => {
   const dirs: string[] = [];
 
   beforeEach(() => {
@@ -68,9 +73,11 @@ describe('evolve — bounded concurrency overlaps work', () => {
         `[concurrency.perf] C=${concurrency} children=${children} wall=${wallMs.toFixed(0)}ms begun=${rv.begun} maxOverlap=${rv.maxOverlap} timedOut=${rv.timedOut}`,
       );
 
-      expect(rv.timedOut).toBe(0); // no child gave up waiting → the barrier was real
-      expect(rv.begun).toBe(children); // every child (not the baseline) reached it
-      expect(rv.maxOverlap).toBe(concurrency); // all C alive at once, never more
+      // On any failure, say what the sandbox actually recorded per evaluation.
+      const why = await sandboxDiagnostics(work);
+      expect(rv.begun, `every child must reach the barrier — ${why}`).toBe(children);
+      expect(rv.timedOut, `no child may give up waiting — ${why}`).toBe(0); // the barrier was real
+      expect(rv.maxOverlap, why).toBe(concurrency); // all C alive at once, never more
     },
     90_000,
   );
