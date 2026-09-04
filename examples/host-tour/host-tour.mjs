@@ -132,7 +132,10 @@ async function main() {
   const failed = reports.filter(r => !r.healthy);
   if (failed.length > 0) {
     process.stderr.write(`\n[host-tour] FAIL: ${failed.length} host(s) failed validate\n`);
-    process.exit(1);
+    // Follows the summary table + per-host detail blocks above — same
+    // async-pipe/exit() truncation risk (macOS pipe buffer ~8 KB).
+    process.exitCode = 1;
+    return;
   }
   process.stderr.write(`\n[host-tour] DONE — ${reports.length}/6 hosts HEALTHY in ${total}ms\n`);
 }

@@ -9,7 +9,7 @@
 // This file implements the subcommands the `harness` binary dispatches to.
 
 import { readFile, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { findWitness, readAndVerify } from './witness-client.js';
@@ -149,13 +149,26 @@ export async function doctor(args: string[]): Promise<SubcommandResult> {
   }
 
   // Common host-specific artifacts (any one is enough — multi-host harness
-  // ships multiple).
+  // ships multiple). One marker per supported host, kept in lockstep with
+  // the per-host emission in host-config.ts (`hostConfigFiles`) — a scaffold
+  // for ANY of the 10 hosts must pass this check.
   const hasClaudeCode = existsSync(join(dir, '.claude', 'settings.json'));
   const hasCodex = existsSync(join(dir, '.codex', 'config.toml'));
   const hasPi = existsSync(join(dir, 'AGENTS.md'));
   const hasHermes = existsSync(join(dir, 'cli-config.yaml'));
-  check(hasClaudeCode || hasCodex || hasPi || hasHermes,
-    'at least one host artifact present (.claude/, .codex/, AGENTS.md, or cli-config.yaml)');
+  const hasOpenclaw = existsSync(join(dir, '.openclaw', 'openclaw.json'));
+  const hasRvm = existsSync(join(dir, 'rvm.manifest.toml'));
+  const hasCopilot = existsSync(join(dir, '.github', 'copilot-instructions.md'));
+  const hasOpencode = existsSync(join(dir, '.opencode', 'opencode.json'));
+  const hasPrimeAgent = existsSync(join(dir, 'install-prime-agent.md'));
+  // github-actions emits `.github/workflows/<slug>.yml` where the slug is
+  // derived from the harness name — match any workflow file, not a fixed path.
+  const workflowsDir = join(dir, '.github', 'workflows');
+  const hasGithubActions = existsSync(workflowsDir)
+    && readdirSync(workflowsDir).some(f => /\.ya?ml$/.test(f));
+  check(hasClaudeCode || hasCodex || hasPi || hasHermes || hasOpenclaw || hasRvm
+    || hasCopilot || hasOpencode || hasGithubActions || hasPrimeAgent,
+    'at least one host artifact present (any of the 10 supported hosts)');
 
   // iter 134: surface .claude-plugin/plugin.json presence (the second-path
   // `claude -p --plugin-dir <harness>` proof). All scaffolds since

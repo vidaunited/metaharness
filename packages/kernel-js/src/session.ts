@@ -118,6 +118,23 @@ interface LogState {
   branchParent: Map<string, { branch: string; index: number }>;
   /** The root branch (the one whose first event carries no parent). */
   rootBranch: string;
+  /** branch → memoised lineage (root → tip) plus, once computed, its state
+   * hash — stamped with the log length it was computed at. The log is
+   * append-only and `events.length` only ever grows, so an entry is valid
+   * exactly while `atEventCount === events.length`; any append on ANY branch
+   * (fork() siblings share this state) bumps the length and silently retires
+   * every entry. Lives on the shared state, not the SessionLog instance, so a
+   * sibling's append can never leave a stale per-instance copy behind. */
+  lineageCache: Map<string, LineageEntry>;
+}
+
+/** One `LogState.lineageCache` entry. `hash` is filled lazily by the first
+ * stateHash()/replay() over this lineage (the sha256 fold dominates replay
+ * cost — ~10× the lineage filter itself on a 5k-event log). */
+interface LineageEntry {
+  atEventCount: number;
+  events: SessionEvent[];
+  hash?: string;
 }
 
 /** Parse + validate a JSONL log; returns either the reconstructed state or
@@ -134,6 +151,7 @@ function parseLog(path: string, raw: string): { state: LogState; errors: string[
     nextIndex: new Map(),
     branchParent: new Map(),
     rootBranch: '',
+    lineageCache: new Map(),
   };
   const errors: string[] = [];
   const seen = new Set<string>();
@@ -237,6 +255,7 @@ export class SessionLog {
       nextIndex: new Map(),
       branchParent: new Map(),
       rootBranch: branch,
+      lineageCache: new Map(),
     };
     this.branch = branch;
   }
@@ -325,17 +344,49 @@ export class SessionLog {
   }
 
   /** The lineage of a branch, root → tip: the branch's own events preceded by
-   * its parent lineage truncated at the fork point, recursively. */
-  private lineage(branch: string): SessionEvent[] {
-    const own = this.state.events
+   * its parent lineage truncated at the fork point, recursively.
+   *
+   * Memoised on the shared state (see `LogState.lineageCache`): a hit is
+   * returned only while the log length still matches the length the entry
+   * was computed at, so an append through THIS or ANY sibling instance
+   * (fork() shares the state) retires it. The recursion into the parent
+   * lineage goes through the same cache, so a warm tree costs one lookup
+   * per branch. Callers must treat the returned entry as read-only (except
+   * for filling `hash`). */
+  private lineage(branch: string): LineageEntry {
+    const { events, lineageCache } = this.state;
+    const hit = lineageCache.get(branch);
+    if (hit !== undefined && hit.atEventCount === events.length) return hit;
+    const own = events
       .filter(e => e.branch === branch)
       .sort((a, b) => a.index - b.index);
     const parent = this.state.branchParent.get(branch);
-    if (!parent) return own;
-    const upstream = this.lineage(parent.branch).filter(
-      e => e.branch !== parent.branch || e.index <= parent.index,
-    );
-    return [...upstream, ...own];
+    let result = own;
+    if (parent) {
+      const upstream = this.lineage(parent.branch).events.filter(
+        e => e.branch !== parent.branch || e.index <= parent.index,
+      );
+      result = [...upstream, ...own];
+    }
+    const entry: LineageEntry = { atEventCount: events.length, events: result };
+    lineageCache.set(branch, entry);
+    return entry;
+  }
+
+  /** The exact state-hash fold over a resolved lineage (root → tip):
+   *     hexPrev = ''; for each event: hexPrev = hex(sha256(utf8(hexPrev + canonicalJson(event))))
+   * Computed once per cache entry and stored on it; shared by stateHash()
+   * and replay() so each resolves the lineage (and folds it) at most once. */
+  private static foldHash(entry: LineageEntry): string {
+    if (entry.hash !== undefined) return entry.hash;
+    let hexPrev = '';
+    for (const e of entry.events) {
+      hexPrev = createHash('sha256')
+        .update(hexPrev + canonicalJson(e), 'utf-8')
+        .digest('hex');
+    }
+    entry.hash = hexPrev;
+    return hexPrev;
   }
 
   /**
@@ -345,18 +396,15 @@ export class SessionLog {
    * Returns lowercase hex; the hash of an empty lineage is ''.
    */
   stateHash(branch: string = this.branch): string {
-    let hexPrev = '';
-    for (const e of this.lineage(branch)) {
-      hexPrev = createHash('sha256')
-        .update(hexPrev + canonicalJson(e), 'utf-8')
-        .digest('hex');
-    }
-    return hexPrev;
+    return SessionLog.foldHash(this.lineage(branch));
   }
 
-  /** Deterministic replay of a branch lineage: event count + state hash. */
+  /** Deterministic replay of a branch lineage: event count + state hash.
+   * Resolves the lineage exactly once (count and hash come from the same
+   * cache entry), instead of once here and once more inside stateHash(). */
   replay(branch: string = this.branch): { eventCount: number; stateHash: string } {
-    return { eventCount: this.lineage(branch).length, stateHash: this.stateHash(branch) };
+    const entry = this.lineage(branch);
+    return { eventCount: entry.events.length, stateHash: SessionLog.foldHash(entry) };
   }
 
   /** Re-read the file from disk and report every validation error

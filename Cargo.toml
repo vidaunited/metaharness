@@ -28,6 +28,18 @@ napi = { version = "2", default-features = false, features = ["napi6", "serde-js
 napi-derive = "2"
 js-sys = "0.3"
 
+# poker-darwin's tests drive real CFR/CFR+ training loops to convergence
+# (Leduc/Hold'em exploitability, Darwin champion vs vanilla baseline). Under
+# the unoptimised dev/test profile they dominated the Rust CI job — 16 min on
+# ubuntu, 42 min on windows; locally `cargo test -p poker-darwin` took 20m20s
+# with one unit test alone at 190s. Optimise just that crate for dev builds;
+# `cargo test` uses the `test` profile, which inherits `dev` INCLUDING this
+# per-package override (verified: `cargo test -p poker-darwin --no-run -v`
+# passes `-C opt-level=3` to rustc for the crate's lib, unit-test harness and
+# tests/*.rs). No test budget is shrunk or ignored — only the codegen changes.
+[profile.dev.package.poker-darwin]
+opt-level = 3
+
 [profile.release]
 opt-level = "z"
 lto = true

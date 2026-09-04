@@ -4,9 +4,11 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync } from 'node:fs';
 import { walkTemplate, asFileMap } from './walker.js';
+import type { RenderedFile } from './walker.js';
 import { writeAtomic } from './writer.js';
 import { emptyManifest, fingerprintFiles, sha256 } from './manifest.js';
 import { validateHarnessName } from './renderer.js';
+import type { TemplateVars } from './renderer.js';
 import { hostConfigFiles } from './host-config.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -572,16 +574,26 @@ SOFTWARE.
 `;
 }
 
-export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
-  const nameCheck = validateHarnessName(opts.name);
-  if (!nameCheck.valid) {
-    throw new Error(`invalid harness name: ${nameCheck.reason}`);
-  }
+/**
+ * Render a harness's COMPLETE file set in memory: the template walk PLUS
+ * every post-render step (GH #10 multi-host overlay, GH #23 license, ADR-147
+ * darwin, ADR-246 sessions). `scaffold()` writes this to disk; `harness
+ * upgrade` re-runs it against the manifest's recorded choices to compute
+ * drift. Single source of truth by design — anything scaffold() adds after
+ * the template walk MUST live here, or upgrade reports the scaffolder's own
+ * additions as drift on a fresh harness (and `--apply` strips them).
+ *
+ * Assumes the caller validated `opts.name` + the template's existence
+ * (scaffold() and upgradeCmd both do, with their own error surfaces).
+ */
+export async function renderHarnessFiles(opts: ScaffoldOptions): Promise<{
+  rendered: RenderedFile[];
+  /** The template vars (name/description/host) the walk was rendered with. */
+  vars: TemplateVars;
+  /** GH #10: de-duplicated full host set (primary first). */
+  hostSet: Host[];
+}> {
   const dir = templateDir(opts.template);
-  if (!existsSync(dir)) {
-    throw new Error(`unknown template: ${opts.template} (expected at ${dir})`);
-  }
-
   const vars = {
     name: opts.name,
     description: opts.description ?? 'My AI agent harness',
@@ -714,6 +726,20 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
     }
   }
 
+  return { rendered, vars, hostSet: hostSet as Host[] };
+}
+
+export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
+  const nameCheck = validateHarnessName(opts.name);
+  if (!nameCheck.valid) {
+    throw new Error(`invalid harness name: ${nameCheck.reason}`);
+  }
+  const dir = templateDir(opts.template);
+  if (!existsSync(dir)) {
+    throw new Error(`unknown template: ${opts.template} (expected at ${dir})`);
+  }
+
+  const { rendered, vars, hostSet } = await renderHarnessFiles(opts);
   const fileMap = asFileMap(rendered);
 
   // iter 58: stamp kernel_version at scaffold time (ADR-027 diagnostic).
@@ -722,7 +748,15 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
   const manifest = emptyManifest(opts.template, opts.generatorVersion, {
     meta: KERNEL_VERSION ? { kernel_version: KERNEL_VERSION } : {},
   });
-  manifest.vars = vars;
+  // Copier's answers-file model (manifest.ts): record EVERY choice the
+  // scaffold was made with, not just the template vars — `harness upgrade`
+  // re-renders from these, so an unrecorded toggle (darwin/sessions) would
+  // come back as false drift on the very next run.
+  manifest.vars = {
+    ...vars,
+    darwin: opts.darwin !== false,   // ADR-147: default ON
+    sessions: opts.sessions === true, // ADR-246 §2.3: default OFF
+  };
   manifest.hosts = hostSet; // GH #10: full host set, not just the primary
   manifest.files = fingerprintFiles(fileMap);
   // Self-hash the manifest itself so `harness upgrade` can detect a hand-

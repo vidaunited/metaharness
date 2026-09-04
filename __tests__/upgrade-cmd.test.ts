@@ -10,7 +10,7 @@ import { upgradeCmd } from '../packages/create-agent-harness/src/upgrade-cmd.js'
 
 const GENERATOR_VERSION = '0.1.0';
 
-async function scaffoldFixture(): Promise<string> {
+async function scaffoldFixture(extra: { darwin?: boolean; sessions?: boolean } = {}): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'ahg-upgrade-'));
   await scaffold({
     name: 'upgrade-test',
@@ -20,6 +20,7 @@ async function scaffoldFixture(): Promise<string> {
     targetDir: dir,
     force: true,
     generatorVersion: GENERATOR_VERSION,
+    ...extra,
   });
   return dir;
 }
@@ -36,16 +37,66 @@ describe('harness upgrade', () => {
     }
   });
 
+  // ADR-008 contract (CHANGELOG iter 47/48): a fresh scaffold has NO drift —
+  // no false positives. upgradeCmd must re-render through the same pipeline
+  // scaffold() uses (renderHarnessFiles), or the scaffolder's own post-render
+  // additions (GH #23 license, ADR-147 darwin, ADR-246 sessions) show up as
+  // "2 removed, 1 clean-overwrite" and `--apply` strips them.
   it('reports "No drift" on a freshly scaffolded harness', async () => {
     const dir = await scaffoldFixture();
     try {
       const r = await upgradeCmd([dir]);
       expect(r.code).toBe(0);
-      expect(r.lines.join('\n')).toMatch(/No drift/);
+      const txt = r.lines.join('\n');
+      expect(txt).toMatch(/No drift/);
+      expect(txt).toMatch(/0 added\n\s+0 removed\n\s+0 clean-overwrite\n\s+0 conflict/);
+      // The manifest records the scaffold-time toggles (copier answers-file
+      // model) so upgrade re-renders from them rather than guessing.
+      const m = JSON.parse(await readFile(join(dir, '.harness', 'manifest.json'), 'utf-8'));
+      expect(m.vars.darwin).toBe(true);    // ADR-147 default ON
+      expect(m.vars.sessions).toBe(false); // ADR-246 §2.3 default OFF
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
   }, 30_000);
+
+  it('reports "No drift" for --no-darwin and --sessions scaffolds (toggles recorded in the manifest)', async () => {
+    for (const opts of [{ darwin: false }, { sessions: true }, { darwin: false, sessions: true }]) {
+      const dir = await scaffoldFixture(opts);
+      try {
+        const r = await upgradeCmd([dir]);
+        expect(r.code, JSON.stringify(opts)).toBe(0);
+        expect(r.lines.join('\n'), JSON.stringify(opts)).toMatch(/No drift/);
+        const m = JSON.parse(await readFile(join(dir, '.harness', 'manifest.json'), 'utf-8'));
+        expect(m.vars.darwin).toBe(opts.darwin !== false);
+        expect(m.vars.sessions).toBe(opts.sessions === true);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    }
+  }, 60_000);
+
+  it('infers the darwin/sessions choice for a legacy manifest that did not record it', async () => {
+    // Pre-ADR-147 manifests have only name/description/host in vars. The
+    // scaffold still left evidence (the @metaharness/darwin devDependency in
+    // package.json; src/sessions/log.ts in the file table) — upgrade must
+    // read that rather than defaulting and reporting false drift.
+    for (const opts of [{}, { darwin: false }, { sessions: true }]) {
+      const dir = await scaffoldFixture(opts);
+      try {
+        const mPath = join(dir, '.harness', 'manifest.json');
+        const m = JSON.parse(await readFile(mPath, 'utf-8'));
+        delete m.vars.darwin;
+        delete m.vars.sessions;
+        await writeFile(mPath, JSON.stringify(m, null, 2));
+        const r = await upgradeCmd([dir]);
+        expect(r.code, JSON.stringify(opts)).toBe(0);
+        expect(r.lines.join('\n'), JSON.stringify(opts)).toMatch(/No drift/);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    }
+  }, 60_000);
 
   it('detects a tampered file as a conflict (dry-run)', async () => {
     const dir = await scaffoldFixture();

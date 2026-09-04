@@ -9,25 +9,50 @@ Run: `npx vitest run packages/darwin-mode/__tests__/perf`
 ## 1. Bounded concurrency actually overlaps work (`concurrency.perf.test.ts`)
 
 `evolve` evaluates a generation's children with `mapLimit(children, concurrency, …)`
-(`src/evolve.ts:149`). The test drives the **real `evolve`** over a fixture repo
-whose `scripts.test` is a ~120 ms sleep (`node -e "setTimeout(()=>{},120)"`),
-resolved by the profiler to `npm test` and run once per variant by the sandbox.
+(`src/evolve.ts:mapLimit()`, called from the generation loop). The test drives
+the **real `evolve`** over a fixture repo whose `scripts.test` is the
+**rendezvous** script from `rendezvous-fixture.ts`, resolved by the profiler to
+`npm test` and run once per variant by the sandbox.
 
-It times one generation of 4 children at `concurrency=1` (sequential lower
-bound) vs `concurrency=4`, and asserts `con < seq × 0.7`.
+History: this was a wall-clock ratio (`con(C=4) < seq(C=1) × 0.7`; measured
+0.37–0.44 locally) and had to be `it.skipIf(CI)` — per-variant `npm` startup on a
+shared runner is slow and variable enough to swamp the overlap signal (observed
+0.72 vs the 0.70 ceiling on Windows). Overlap is now proven **logically**, not by
+timing: every child evaluation appends a begin marker and then blocks until
+`target` (= the width, 4) begin markers exist, then appends an end marker.
+Under a real width-4 `mapLimit` all four children are therefore alive at the
+same instant regardless of runner speed — `maxOverlap === 4` — while the
+`mapLimit` bound means it can never be more. A sequential evaluation could only
+ever produce `maxOverlap = 1` after 4 barrier timeouts (verified as a negative
+control with `concurrency: 1`: `{maxOverlap: 1, begun: 2, timedOut: 1}`).
 
-Measured (3 runs, this machine):
+The baseline variant is evaluated alone before any child (`evolve.ts`, `---
+generations ---`), so the script's first invocation only drops a gate file and
+exits; every later invocation rendezvouses. All paths are absolute and outside
+the fixture repo (the sandbox scrubs the env and, on Windows, ran with a
+per-variant cwd — the old relative `markers.log` was ENOENT there).
 
-| run | seq (C=1) | con (C=4) | ratio |
-|-----|-----------|-----------|-------|
-| 1   | 1978 ms   | 869 ms    | 0.44  |
-| 2   | 1465 ms   | 608 ms    | 0.42  |
-| 3   | 1615 ms   | 594 ms    | 0.37  |
+Measured (3 runs under `CI=1`, this machine, while a `cargo test` run loaded
+the CPU):
 
-Ratio ≈ **0.37–0.44** (≈ 2.3–2.7× speedup), well under the 0.7 ceiling and
-stable across runs. The ideal for 4 children at width 4 is ~0.25× of the child
-phase; the residual is the serial baseline evaluation (present in both runs) plus
-per-variant `npm` startup. Conclusion: concurrency is real and bounded.
+| run | wall (C=4, 4 children) | begun | maxOverlap | timedOut |
+|-----|------------------------|-------|------------|----------|
+| 1   | 732 ms                 | 4     | 4          | 0        |
+| 2   | 602 ms                 | 4     | 4          | 0        |
+| 3   | 551 ms                 | 4     | 4          | 0        |
+
+Asserted: `begun === 4`, `timedOut === 0`, `maxOverlap === 4` (each with the
+sandbox's per-evaluation traces as the failure message). Wall-clock is logged
+for local inspection, never asserted. Conclusion: concurrency is real and
+bounded, and the test runs on Linux/macOS CI.
+
+**Windows:** both e2e tests `describe.skipIf(win32)`. The real sandbox runs the
+profiler-resolved `npm test` with `execFile` and no shell, which cannot start
+`npm.cmd` on Windows; the spawn error is recorded as an ordinary exitCode-1
+trace and no child process is ever created (CI run 33868034552: the whole
+evolve finished in 211ms — five `npm` starts take ≥1s — and `markers.log` was
+never written). That is a sandbox property, not a fixture one; lifting the skip
+means teaching `src/sandbox.ts` to launch `.cmd` runners on win32.
 
 ## 2. `mapLimit` width bound + order (`mapLimit.test.ts`)
 
@@ -40,9 +65,13 @@ checked directly on the primitive plus end-to-end:
   (`results[i] === fn(items[i])`). Width also clamps to item count when
   `limit > items`.
 - **End-to-end (real path):** `evolve` runs 6 children at `concurrency=3` against
-  a `marker.cjs` testCommand that appends begin/end timestamps around an ~80 ms
-  sleep. Replaying the markers, observed max overlap = **3**, i.e. `1 < overlap ≤
-  concurrency` — real overlap, never exceeding the configured width.
+  the same rendezvous testCommand as §1 with `target = 3`: the first three
+  children wait for each other (all alive at once), children 4–6 see ≥3 begun
+  and exit immediately. Observed `maxOverlap` = **3** = `concurrency` exactly,
+  `begun = 6`, `timedOut = 0` — real overlap, never exceeding the configured
+  width. (Previously an ~80 ms-sleep `marker.cjs` with overlap inferred from
+  timestamps, `skipIf(CI)` because a loaded runner produced `maxOverlap = 1`;
+  now runs on CI.)
 
 ## 3. Resource bounds hold (`bounds.perf.test.ts`)
 

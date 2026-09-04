@@ -330,7 +330,10 @@ async function main() {
 
   if (JSON_OUT) {
     process.stdout.write(JSON.stringify({ results, ok: results.every(r => r.tag !== 'FAIL') }, null, 2) + '\n');
-    process.exit(results.some(r => r.tag === 'FAIL') ? 1 : 0);
+    // stdout on a pipe is async and macOS's pipe buffer is ~8 KB; process.exit()
+    // right after a large write truncates whatever hasn't flushed yet.
+    process.exitCode = results.some(r => r.tag === 'FAIL') ? 1 : 0;
+    return;
   }
 
   process.stderr.write(`healthcheck — ${results.length} check${results.length === 1 ? '' : 's'}\n`);

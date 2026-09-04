@@ -1,0 +1,27 @@
+# Codex skill: list the harness templates you can scaffold from.
+#
+# Wraps `npx metaharness --list` — the CLI's catalog printer
+# (templates/catalog.json rendered by formatCatalog()). Read-only: it
+# answers "what can I scaffold?" so the user can pick a `--template`
+# id for `create-harness`. Mirrors .claude-plugin/skills/list-templates.
+
+[skill]
+name = "list-templates"
+version = "0.1.0"
+description = "List the available harness templates (minimal + 19 vertical packs) and what each one ships with — agents / skills / commands counts + a one-line quick-start. Use when the user asks what templates or verticals the harness generator supports."
+author = "rUv <ruv@ruv.net>"
+homepage = "https://github.com/ruvnet/agent-harness-generator"
+license = "MIT"
+
+# Dispatches to the published CLI — no MCP server needed; `--list` prints
+# the catalog and exits without scaffolding anything.
+[dispatch]
+type = "shell"
+command = "npx --yes metaharness@latest --list"
+
+[command]
+name = "list-templates"
+synopsis = "List every template `create-harness` can scaffold from"
+
+[catalog]
+tags = ["templates", "catalog", "scaffolding", "agent-harness", "verticals", "discovery"]

@@ -94,11 +94,15 @@ describe('metaharness subcommand router (iter 117)', () => {
     expect(r.out).toMatch(/Usage: harness genome/);
   });
 
-  it('bare name (back-compat) still works — falls through to legacy scaffold', async () => {
-    // No name + no subcommand → prints usage with exit 2.
+  it('no args (back-compat) falls through to the legacy scaffold path and prints usage with exit 0 (#73)', async () => {
+    // No name + no subcommand → the router returns null, the legacy path
+    // prints help. #73: bare `metaharness` is a SUCCESSFUL invocation (help),
+    // so it exits 0 — only a subcommand missing ITS required args (from-repo,
+    // analyze) returns the non-zero usage code, and those are pinned above.
     const r = await captureMain([]);
-    expect(r.code).toBe(2);
-    expect(r.out).toMatch(/Usage: npx metaharness/);
+    expect(r.code).toBe(0);
+    expect(r.out).toMatch(/Usage: npx metaharness <name>/);
+    expect(r.err).toBe('');
   });
 
   it('unknown first-arg verb (not a subcommand, not a flag) falls through to legacy scaffold', async () => {

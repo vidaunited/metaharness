@@ -124,11 +124,23 @@ Upstream references (schemas are Apache-2.0 with existing Python/Go bindings):
 
 ## Install / Build
 
+This package is deliberately **not** a member of the root npm workspace
+(`"!packages/agntcy"` in the root `package.json`): its one runtime dependency,
+`agntcy-dir`, pulls three `@buf/*` packages from the Buf Schema Registry
+(`buf.build`), and having them in the root lockfile made `npm ci` impossible
+anywhere that registry is unreachable — the opposite of "optional peer
+package, never a hard kernel dependency". It is installed, built, and tested
+on its own, from inside the package directory (the `.npmrc` here carries the
+`@buf:registry` scope mapping; there is intentionally no committed lockfile):
+
 ```bash
-npm install                         # from the monorepo root (workspaces)
-npm run build -w @metaharness/agntcy
-npm test  -w @metaharness/agntcy
+npm run install:agntcy              # == npm install --prefix packages/agntcy (needs buf.build access)
+npm run test:agntcy                 # build + vitest, inside packages/agntcy
+# or, by hand:
+cd packages/agntcy && npm install && npm run build && npm test
 ```
+
+The root `npm ci` / `npm run build` / `npm test` never touch this package.
 
 ## Try it end-to-end
 
@@ -153,8 +165,11 @@ used by `oasf/publish.ts`. Everything else — `identity/`, `casa/`,
 `observability/` — stays dependency-free at the runtime layer, matching
 `@metaharness/redblue`, `@metaharness/darwin`, and `@metaharness/flywheel`.
 `typescript` and `vitest` are `devDependencies` only. Installing this package
-requires the Buf Schema Registry npm scope (already committed in `.npmrc`) —
-see "Status" above.
+requires the Buf Schema Registry npm scope (already committed in this
+package's `.npmrc`; consumers installing from npm need the same
+`@buf:registry=https://buf.build/gen/npm/v1/` line in their own `.npmrc`) —
+see "Status" above and "Install / Build" for why it sits outside the root
+workspace.
 
 ## Current state
 

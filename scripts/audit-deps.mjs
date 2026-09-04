@@ -115,9 +115,17 @@ async function runNpmAudit(cwd) {
       ? { tag: 'PASS', msg: 'no advisories' }
       : { tag: 'WARN', msg: 'audit ran but produced non-JSON output', exit: 0 };
   }
+  // npm reports registry/network failures as JSON too — `{message, error:
+  // {code, summary}}` with NO metadata block (503, fetch timeout, 400
+  // "Invalid package tree"). Counting that as 0 advisories made a degraded
+  // registry read ALL CLEAN. Fail closed: the audit did not complete.
+  if (parsed.metadata?.vulnerabilities === undefined) {
+    const reason = parsed.message ?? parsed.error?.summary ?? parsed.error?.code ?? 'npm returned no audit metadata';
+    return { tag: 'FAIL', msg: `npm audit did not complete (exit ${exitCode}): ${reason}` };
+  }
   // npm v7+ shape: parsed.vulnerabilities is an object keyed by pkg name;
   // parsed.metadata.vulnerabilities has counts per severity.
-  const counts = parsed.metadata?.vulnerabilities ?? {};
+  const counts = parsed.metadata.vulnerabilities;
   const failCount = LEVELS.slice(levelIdx).reduce((s, l) => s + (counts[l] ?? 0), 0);
   const total = Object.values(counts).reduce((s, n) => s + (n ?? 0), 0);
   if (failCount === 0) {

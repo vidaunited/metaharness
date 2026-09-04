@@ -43,7 +43,7 @@
     "access": "public"
   },
   "dependencies": {
-    "metaharness": "0.1.5"
+    "metaharness": "^0.4.6"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

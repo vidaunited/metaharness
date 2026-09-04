@@ -108,7 +108,24 @@ export async function auditCmd(args: string[]): Promise<SubcommandResult> {
     return { code: 1, lines };
   }
 
-  const counts = parsed.metadata?.vulnerabilities ?? {};
+  // npm reports registry/network failures as JSON too — `{message, error:
+  // {code, summary}}` with NO metadata block (a 503, a fetch timeout, a 400
+  // "Invalid package tree"). Reading that as "0 advisories" turned a degraded
+  // registry into a green audit. Fail closed: no metadata ⇒ the audit did not
+  // complete, and the npm message is the diagnostic.
+  if (parsed.metadata?.vulnerabilities === undefined) {
+    const reason: string = parsed.message ?? parsed.error?.summary ?? parsed.error?.code ?? 'npm returned no audit metadata';
+    if (bundle) {
+      return {
+        code: 1,
+        lines: [JSON.stringify({ schema: 1, error: 'npm-audit-incomplete', detail: reason, exitCode, stderr }, null, 2)],
+      };
+    }
+    lines.push(`  npm audit did not complete (exit ${exitCode}): ${reason}`);
+    return { code: 1, lines };
+  }
+
+  const counts = parsed.metadata.vulnerabilities;
   const levelIdx = LEVELS.indexOf(level as any);
   const failCount = LEVELS.slice(levelIdx).reduce((s, l) => s + (counts[l] ?? 0), 0);
   const total = Object.values<number>(counts).reduce((s, n) => s + (n ?? 0), 0);

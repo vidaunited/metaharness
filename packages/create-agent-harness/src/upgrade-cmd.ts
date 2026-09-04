@@ -15,8 +15,9 @@ import { resolve, join } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { planUpgrade, formatPlan, applyPlan } from './upgrade.js';
-import { walkTemplate, asFileMap } from './walker.js';
-import { templateDir } from './index.js';
+import { asFileMap } from './walker.js';
+import { templateDir, renderHarnessFiles } from './index.js';
+import type { Host } from './index.js';
 import { createHash } from 'node:crypto';
 import type { TemplateVars } from './renderer.js';
 
@@ -25,12 +26,34 @@ export type SubcommandResult = { code: number; lines: string[] };
 interface ManifestShape {
   template: string;
   vars: TemplateVars;
+  /** GH #10: full host set (primary first). Absent on pre-GH-#10 manifests. */
+  hosts?: string[];
   files: Record<string, string>;
+  /** Generator version stamped by emptyManifest() (manifest.ts). */
+  generator?: string;
   generator_version?: string;
 }
 
 function sha256(s: string): string {
   return createHash('sha256').update(s, 'utf-8').digest('hex');
+}
+
+/**
+ * Pre-ADR-147 manifests didn't record the darwin choice in `vars`. The one
+ * durable trace scaffold() leaves is the `@metaharness/darwin` devDependency
+ * it writes into the harness's package.json — so read the on-disk file.
+ * (The evolve SKILL.md is NOT a reliable signal: vertical:exotic ships its
+ * own template stub of it regardless of the darwin toggle.)
+ */
+async function inferLegacyDarwin(dir: string): Promise<boolean> {
+  try {
+    const pkg = JSON.parse(await readFile(join(dir, 'package.json'), 'utf-8')) as {
+      devDependencies?: Record<string, string>;
+    };
+    return Boolean(pkg.devDependencies?.['@metaharness/darwin']);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -72,7 +95,26 @@ export async function upgradeCmd(args: string[]): Promise<SubcommandResult> {
     return { code: 1, lines };
   }
 
-  const rendered = await walkTemplate(tdir, manifest.vars, { strict: false });
+  // Re-render through the SAME pipeline scaffold() uses (template walk +
+  // every post-render step: GH #10 host overlays, GH #23 license, ADR-147
+  // darwin, ADR-246 sessions). Walking the template alone reported the
+  // scaffolder's own additions as drift on a FRESH harness ("2 removed,
+  // 1 clean-overwrite") and `--apply` then overwrote package.json with the
+  // bare template — stripping `license`, the darwin devDependency and the
+  // `evolve` scripts. ADR-008's contract: no drift on a fresh scaffold.
+  const vars = manifest.vars ?? {};
+  const { rendered } = await renderHarnessFiles({
+    name: String(vars.name ?? ''),
+    description: typeof vars.description === 'string' ? vars.description : undefined,
+    template: manifest.template,
+    host: (typeof vars.host === 'string' ? vars.host : manifest.hosts?.[0] ?? 'claude-code') as Host,
+    hosts: manifest.hosts as Host[] | undefined,
+    darwin: typeof vars.darwin === 'boolean' ? vars.darwin : await inferLegacyDarwin(dir),
+    sessions: typeof vars.sessions === 'boolean' ? vars.sessions : 'src/sessions/log.ts' in (manifest.files ?? {}),
+    targetDir: dir,
+    force: true,
+    generatorVersion: manifest.generator ?? manifest.generator_version ?? '',
+  });
   const upstreamFiles = asFileMap(rendered);
   const upstreamFingerprints: Record<string, string> = {};
   for (const [path, content] of Object.entries(upstreamFiles)) {

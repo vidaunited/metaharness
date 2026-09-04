@@ -240,6 +240,24 @@ shutdown against `@agntcy/slim-bindings@2.0.0-alpha.5` succeeds under plain
 Node with zero errors. See that ADR's own update section for the pinned
 version and test changes.
 
+## Update (2026-09-04) — the package now lives outside the root npm workspace
+
+§5's "optional peer, never a hard kernel dependency" was not true of the
+*monorepo install*: `@metaharness/agntcy`'s `agntcy-dir` dependency resolves
+three `@buf/*` packages from the Buf Schema Registry (`buf.build`), and with
+the package in `"workspaces": ["packages/*"]` those entries sat in the root
+`package-lock.json` — so `npm ci` failed in every environment that could not
+reach `buf.build`, taking the whole workspace (kernel, hosts, CLI) down with an
+optional integration. The root `package.json` now excludes it
+(`"!packages/agntcy"`), the root lockfile carries no `@buf/*` entries, and the
+package installs/builds/tests on its own inside `packages/agntcy` (its own
+`.npmrc` with the `@buf:registry` mapping, deliberately no committed lockfile
+— see the package README "Install / Build"; root scripts `install:agntcy` /
+`test:agntcy`). `scripts/pack-all.mjs` packs it only when it has been installed
+separately, and CI exercises it in a dedicated step rather than through the
+workspace fan-out. Nothing about §2/§4's design changes; this is the install
+boundary catching up with the ADR's stated one.
+
 ## References
 
 - Cisco AGNTCY overview — https://outshift.cisco.com/the-internet-of-agents/agntcy
