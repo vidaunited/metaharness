@@ -47,8 +47,9 @@ const PHASES = [
   ],
   // Phase 4: vertical-trading (depends on vertical-base) + bench
   // (depends on EVERY host adapter for the cross-host benchmark in
-  // iter 39's host-bench.ts).
-  ['vertical-trading', 'bench'],
+  // iter 39's host-bench.ts). agent-harness-generator-lib (iter 116) only
+  // re-exports `metaharness` (= create-agent-harness, phase 3) → phase 4.
+  ['vertical-trading', 'bench', 'agent-harness-generator-lib'],
 ];
 
 const ROOT = process.cwd();

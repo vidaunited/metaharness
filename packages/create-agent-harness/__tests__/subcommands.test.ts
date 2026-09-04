@@ -3,11 +3,13 @@
 import { describe, it, expect } from 'vitest';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { dispatch } from '../src/subcommands.js';
 
-async function makeHarness(opts: { withHash?: boolean; withWitness?: boolean } = {}): Promise<string> {
+async function makeHarness(
+  opts: { withHash?: boolean; withWitness?: boolean; hostArtifact?: string } = {},
+): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'cah-sub-'));
   await mkdir(join(dir, '.harness'), { recursive: true });
   await mkdir(join(dir, '.claude'), { recursive: true });
@@ -32,7 +34,15 @@ async function makeHarness(opts: { withHash?: boolean; withWitness?: boolean } =
     name: 'demo',
     dependencies: { '@metaharness/kernel': '0.1.0' },
   }));
-  await writeFile(join(dir, '.claude', 'settings.json'), '{}');
+  // hostArtifact: write ONLY that host's marker file (relative path) instead
+  // of the default .claude/settings.json, so doctor's host check is exercised
+  // per host.
+  if (opts.hostArtifact) {
+    await mkdir(dirname(join(dir, opts.hostArtifact)), { recursive: true });
+    await writeFile(join(dir, opts.hostArtifact), '');
+  } else {
+    await writeFile(join(dir, '.claude', 'settings.json'), '{}');
+  }
   if (opts.withWitness) {
     await writeFile(join(dir, '.harness', 'witness.json'), JSON.stringify({
       schema: 1,
@@ -93,6 +103,24 @@ describe('dispatch — doctor', () => {
     const r = await dispatch('doctor', [dir]);
     expect(r.code).toBe(1);
     expect(r.lines.join('\n')).toMatch(/FAIL/);
+  });
+
+  // Doctor used to recognise only 4 of the 10 hosts' artifacts, so an
+  // openclaw/rvm/copilot/opencode/github-actions/prime-agent-only scaffold
+  // failed `harness validate`. Pin every host's marker file here.
+  it.each([
+    ['openclaw', '.openclaw/openclaw.json'],
+    ['rvm', 'rvm.manifest.toml'],
+    ['copilot', '.github/copilot-instructions.md'],
+    ['opencode', '.opencode/opencode.json'],
+    ['github-actions', '.github/workflows/demo.yml'],
+    ['prime-agent', 'install-prime-agent.md'],
+  ])('passes a %s-only harness (%s)', async (_host, hostArtifact) => {
+    const dir = await makeHarness({ withHash: true, hostArtifact });
+    const r = await dispatch('doctor', [dir]);
+    expect(r.lines.join('\n')).toMatch(/PASS at least one host artifact present/);
+    expect(r.code).toBe(0);
+    expect(r.lines.join('\n')).toMatch(/HEALTHY/);
   });
 
   it('flags a hash mismatch', async () => {
