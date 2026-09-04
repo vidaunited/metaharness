@@ -140,6 +140,17 @@ jobs:
         run: npm run build
       - name: TypeScript tests
         run: npm test
+      - name: Root test suite (__tests__/ — cross-package + config drift guards)
+        # `npm test` only fans out to per-workspace suites (`npm run -ws test`),
+        # so the root __tests__/ files — plugin/codex/workflow drift guards,
+        # scaffold→validate e2e, CLI subcommand routing — ran nowhere. vitest's
+        # positional filter is a SUBSTRING match, so `__tests__` alone would
+        # re-run every packages/*/__tests__ file too; exclude the packages
+        # tree instead. The two *.real.test.ts files run in their own
+        # OS-specific jobs below. The live npm-audit tests self-skip (with a
+        # reason) only when npm's advisory endpoint is unreachable/5xx.
+        shell: bash
+        run: npx vitest run --exclude "packages/**" --exclude "**/*.real.test.ts"
       - name: Path-handling guard (the /tmp Windows bug regression test)
         shell: bash
         run: node scripts/path-guard.mjs

@@ -8,7 +8,7 @@
 //  1. A real scaffolded harness gets a non-trivial score (>= 30; we don't
 //     gate on 85+ because tests/sbom/witness aren't always populated yet).
 //  2. The 5 named dimensions appear in the text output.
-//  3. --json emits the badges shape (score + mcpRisk + 4 booleans).
+//  3. --json emits the badges shape (score + mcpRisk + 4 booleans + #15 schema id).
 //  4. --bundle emits an ADR-031 schema-1 envelope of the full scorecard.
 //  5. --out writes the badges JSON to a file.
 //  6. Missing target dir is bundle-formed (ADR-031 rule 3).
@@ -69,13 +69,17 @@ describe('harness score (iter 111)', () => {
     }
   });
 
-  it('--json emits the 6-field badges shape', async () => {
+  it('--json emits the 7-field badges shape (6 badges + #15 schema discriminator)', async () => {
     const dir = await scaffoldHarness('score-json');
     try {
       const r = await scoreCmd([dir, '--json']);
       const j = JSON.parse(r.lines.join('\n'));
       const keys = Object.keys(j).sort();
-      expect(keys).toEqual(['mcpRisk', 'releaseReady', 'sbom', 'score', 'testsDetected', 'witnessSigned']);
+      expect(keys).toEqual(['mcpRisk', 'releaseReady', 'sbom', 'schema', 'score', 'testsDetected', 'witnessSigned']);
+      // #15: the badge blob carries a STRING schema id so consumers can tell it
+      // apart from the numeric-schema `metaharness score` scorecard at the data
+      // layer (an unmarked blob was silently mis-parsed as that shape).
+      expect(j.schema).toBe('harness-quickcheck-v1');
       expect(typeof j.score).toBe('number');
       expect(j.score).toBeGreaterThanOrEqual(0);
       expect(j.score).toBeLessThanOrEqual(100);
@@ -111,8 +115,9 @@ describe('harness score (iter 111)', () => {
       expect([0, 1, 2]).toContain(r.code);
       expect(existsSync(outPath)).toBe(true);
       const j = JSON.parse(readFileSync(outPath, 'utf-8'));
-      // File contains the badges shape, NOT the full envelope.
-      expect(Object.keys(j).sort()).toEqual(['mcpRisk', 'releaseReady', 'sbom', 'score', 'testsDetected', 'witnessSigned']);
+      // File contains the badges shape (+ #15 schema id), NOT the full envelope.
+      expect(Object.keys(j).sort()).toEqual(['mcpRisk', 'releaseReady', 'sbom', 'schema', 'score', 'testsDetected', 'witnessSigned']);
+      expect(j.schema).toBe('harness-quickcheck-v1');
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

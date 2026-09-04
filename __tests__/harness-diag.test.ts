@@ -9,7 +9,7 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -75,6 +75,12 @@ describe('formatDiagReport', () => {
       localKernelVersion: '0.1.0',
       verdict: 'match',
       actionable: undefined,
+      // GH #22: backend-tier diagnostics are part of the DiagReport shape now
+      // (native > wasm > js). Pinned to the js floor with no requested tier so
+      // these fixtures exercise only the version-skew lines.
+      kernelBackend: 'js',
+      requestedBackend: null,
+      backendReasons: {},
     });
     expect(r.code).toBe(0);
     expect(r.lines.join('\n')).toMatch(/PASS kernel versions match/);
@@ -88,6 +94,12 @@ describe('formatDiagReport', () => {
       localKernelVersion: '1.0.0',
       verdict: 'major-diff',
       actionable: 'Run: npm install @metaharness/kernel@0.1.0 (major skew — APIs may break)',
+      // GH #22: backend-tier diagnostics are part of the DiagReport shape now
+      // (native > wasm > js). Pinned to the js floor with no requested tier so
+      // these fixtures exercise only the version-skew lines.
+      kernelBackend: 'js',
+      requestedBackend: null,
+      backendReasons: {},
     });
     expect(r.code).toBe(1);
     expect(r.lines.join('\n')).toMatch(/FAIL MAJOR skew/);
@@ -102,6 +114,12 @@ describe('formatDiagReport', () => {
       localKernelVersion: '0.2.0',
       verdict: 'minor-diff',
       actionable: 'Run: npm install @metaharness/kernel@0.1.0',
+      // GH #22: backend-tier diagnostics are part of the DiagReport shape now
+      // (native > wasm > js). Pinned to the js floor with no requested tier so
+      // these fixtures exercise only the version-skew lines.
+      kernelBackend: 'js',
+      requestedBackend: null,
+      backendReasons: {},
     });
     expect(r.code).toBe(1);
   });
@@ -114,6 +132,12 @@ describe('formatDiagReport', () => {
       localKernelVersion: '0.1.5',
       verdict: 'patch-diff',
       actionable: 'Optional: ...',
+      // GH #22: backend-tier diagnostics are part of the DiagReport shape now
+      // (native > wasm > js). Pinned to the js floor with no requested tier so
+      // these fixtures exercise only the version-skew lines.
+      kernelBackend: 'js',
+      requestedBackend: null,
+      backendReasons: {},
     });
     expect(r.code).toBe(0);
     expect(r.lines.join('\n')).toMatch(/WARN patch-level skew/);
@@ -127,6 +151,12 @@ describe('formatDiagReport', () => {
       localKernelVersion: '0.1.0',
       verdict: 'unparseable',
       actionable: undefined,
+      // GH #22: backend-tier diagnostics are part of the DiagReport shape now
+      // (native > wasm > js). Pinned to the js floor with no requested tier so
+      // these fixtures exercise only the version-skew lines.
+      kernelBackend: 'js',
+      requestedBackend: null,
+      backendReasons: {},
     });
     expect(r.code).toBe(2);
     expect(r.lines.join('\n')).toMatch(/no \.harness\/manifest\.json found/);
@@ -142,6 +172,12 @@ describe('generator-version skew (iter 71)', () => {
       localKernelVersion: '0.1.0',
       verdict: 'match',
       actionable: undefined,
+      // GH #22: backend-tier diagnostics are part of the DiagReport shape now
+      // (native > wasm > js). Pinned to the js floor with no requested tier so
+      // these fixtures exercise only the version-skew lines.
+      kernelBackend: 'js',
+      requestedBackend: null,
+      backendReasons: {},
       manifestGeneratorVersion: '0.1.0',
       localGeneratorVersion: '0.1.0',
       generatorVerdict: 'match',
@@ -163,6 +199,12 @@ describe('generator-version skew (iter 71)', () => {
       localKernelVersion: '0.1.0',
       verdict: 'match',
       actionable: undefined,
+      // GH #22: backend-tier diagnostics are part of the DiagReport shape now
+      // (native > wasm > js). Pinned to the js floor with no requested tier so
+      // these fixtures exercise only the version-skew lines.
+      kernelBackend: 'js',
+      requestedBackend: null,
+      backendReasons: {},
       manifestGeneratorVersion: '0.0.1',
       localGeneratorVersion: '1.0.0',
       generatorVerdict: 'major-diff',
@@ -224,9 +266,13 @@ describe('--bundle output (iter 90 MILESTONE)', () => {
       // harness block — only @metaharness/* deps
       expect(b.harness.packageName).toBe('bundle-bot');
       expect(Object.keys(b.harness.rufloDeps)).toContain('@metaharness/kernel');
-      // manifest present + read
+      // manifest present + read. iter 58 stamps meta.kernel_version from the
+      // LOCAL @metaharness/kernel at scaffold time (workspace symlink →
+      // packages/kernel-js), so the expectation tracks that package's
+      // version rather than a hard-coded release.
       expect(b.manifest.present).toBe(true);
-      expect((b.manifest.content as any).meta.kernel_version).toBe('0.1.0');
+      const kernelPkg = JSON.parse(readFileSync(join(REPO_ROOT, 'packages', 'kernel-js', 'package.json'), 'utf-8'));
+      expect((b.manifest.content as any).meta.kernel_version).toBe(kernelPkg.version);
       // harnessFiles enumerates .harness/* (iter 90 fix — readdirSync
       // import works in ESM context, not require)
       expect(b.harnessFiles).toContain('.harness/manifest.json');

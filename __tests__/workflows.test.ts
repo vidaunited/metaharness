@@ -6,7 +6,7 @@
 // without bringing actionlint into the toolchain. Pins:
 //   - every `run: node scripts/<X>.mjs` references a real file
 //   - every workflow has unique job names
-//   - publish.yml's gate steps run BEFORE any `npm publish`
+//   - publish.yml's gate steps run BEFORE the workspace publish step
 //   - ci.yml's matrix covers all 3 OS
 
 import { describe, it, expect } from 'vitest';
@@ -63,32 +63,60 @@ describe('.github/workflows/*.yml', () => {
     expect(ci.match(/runs-on:\s*\$\{\{\s*matrix\.os\s*\}\}/g)?.length ?? 0).toBeGreaterThanOrEqual(4);
   });
 
-  it('publish.yml runs validate-gcp-secrets + publish-dryrun BEFORE any npm publish', async () => {
+  // PR #152 post-mortem: publish.yml no longer carries one `npm publish
+  // --provenance` step per package — a single idempotent
+  // `node scripts/publish-workspace.mjs` step publishes RELEASE_ORDER in
+  // dependency order, skipping versions already on the registry. The gates
+  // must run BEFORE that step, and the script itself must carry the
+  // provenance flag.
+  const PUBLISH_STEP = /run:\s*node scripts\/publish-workspace\.mjs/;
+
+  it('publish.yml runs validate-gcp-secrets + publish-dryrun BEFORE the workspace publish step', async () => {
     const pub = await readFile(join(WORKFLOWS, 'publish.yml'), 'utf-8');
     const gate1Idx = pub.indexOf('validate-gcp-secrets.mjs');
     const gate2Idx = pub.indexOf('publish-dryrun.mjs');
-    // Look for the actual `run: npm publish --provenance` invocation, not
-    // the literal string "npm publish" that appears in gate step `name:`s.
-    const firstPubIdx = pub.search(/npm publish --provenance/);
+    // Look for the actual `run:` invocation, not the comment above it.
+    const firstPubIdx = pub.search(PUBLISH_STEP);
     expect(gate1Idx, 'validate-gcp-secrets.mjs not in publish.yml').toBeGreaterThan(0);
     expect(gate2Idx, 'publish-dryrun.mjs not in publish.yml').toBeGreaterThan(0);
-    expect(firstPubIdx, '`npm publish --provenance` not in publish.yml').toBeGreaterThan(0);
-    expect(gate1Idx, 'Gate 1 must run before first npm publish').toBeLessThan(firstPubIdx);
-    expect(gate2Idx, 'Gate 2 must run before first npm publish').toBeLessThan(firstPubIdx);
+    expect(firstPubIdx, '`run: node scripts/publish-workspace.mjs` not in publish.yml').toBeGreaterThan(0);
+    expect(gate1Idx, 'Gate 1 must run before the workspace publish').toBeLessThan(firstPubIdx);
+    expect(gate2Idx, 'Gate 2 must run before the workspace publish').toBeLessThan(firstPubIdx);
+    // No stray per-package publish steps snuck back in beside the script.
+    expect(pub, 'publish.yml must not hand-roll `npm publish` steps').not.toMatch(/run:[^\n]*npm publish/);
   });
 
-  it('publish.yml runs marketplace-entry.mjs AFTER all npm publish steps', async () => {
+  it('scripts/publish-workspace.mjs publishes with --provenance --access public', async () => {
+    const script = await readFile(join(SCRIPTS, 'publish-workspace.mjs'), 'utf-8');
+    expect(script).toMatch(/\['publish',\s*'--provenance',\s*'--access',\s*'public'\]/);
+  });
+
+  it('publish.yml runs marketplace-entry.mjs AFTER the workspace publish step', async () => {
     const pub = await readFile(join(WORKFLOWS, 'publish.yml'), 'utf-8');
-    const lastPubIdx = pub.lastIndexOf('npm publish --provenance');
+    const pubIdx = pub.search(PUBLISH_STEP);
     const marketplaceIdx = pub.indexOf('marketplace-entry.mjs');
     expect(marketplaceIdx, 'marketplace-entry.mjs not wired').toBeGreaterThan(0);
-    expect(marketplaceIdx, 'marketplace gen must run after final npm publish').toBeGreaterThan(lastPubIdx);
+    expect(marketplaceIdx, 'marketplace gen must run after the workspace publish').toBeGreaterThan(pubIdx);
   });
 
-  it('publish.yml publishes every host adapter package', async () => {
-    const pub = await readFile(join(WORKFLOWS, 'publish.yml'), 'utf-8');
-    for (const host of ['host-claude-code', 'host-codex', 'host-pi-dev', 'host-hermes', 'host-openclaw', 'host-rvm']) {
-      expect(pub, `publish.yml missing ${host}`).toMatch(new RegExp(host));
+  it('publish-workspace.mjs RELEASE_ORDER covers every published host adapter, and every entry is a real public package', async () => {
+    // The script only runs main() when executed directly, so importing it
+    // is side-effect free (same guard the unit tests rely on).
+    const { RELEASE_ORDER } = await import('../scripts/publish-workspace.mjs') as { RELEASE_ORDER: string[] };
+    for (const host of ['host-claude-code', 'host-codex', 'host-pi-dev', 'host-hermes', 'host-openclaw', 'host-rvm', 'host-prime-agent']) {
+      expect(RELEASE_ORDER, `RELEASE_ORDER missing ${host}`).toContain(host);
+    }
+    // Dependency order: the kernel + sdk ship before any host adapter, and
+    // create-agent-harness (which depends on all of them) ships last.
+    expect(RELEASE_ORDER[0]).toBe('kernel-js');
+    expect(RELEASE_ORDER.indexOf('sdk')).toBeLessThan(RELEASE_ORDER.indexOf('host-claude-code'));
+    expect(RELEASE_ORDER[RELEASE_ORDER.length - 1]).toBe('create-agent-harness');
+    // A stale entry fails the tag run with "release set is stale" — catch it here.
+    for (const dir of RELEASE_ORDER) {
+      const pkgPath = join(process.cwd(), 'packages', dir, 'package.json');
+      expect(existsSync(pkgPath), `RELEASE_ORDER entry packages/${dir} has no package.json`).toBe(true);
+      const pkg = JSON.parse(await readFile(pkgPath, 'utf-8'));
+      expect(pkg.private, `packages/${dir} is private but listed in RELEASE_ORDER`).not.toBe(true);
     }
   });
 

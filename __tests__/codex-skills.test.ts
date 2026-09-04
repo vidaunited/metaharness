@@ -154,7 +154,7 @@ describe('.codex/skills/*/skill.toml manifests', () => {
 
   // iter 70 — every harness-lifecycle skill that exists on disk now,
   // pinned so dropping one is visible in code review.
-  it('all 8 codex skills are present (iter 70: + diag-harness; + list-templates)', async () => {
+  it('all 14 codex skills are present (iter 70: + diag-harness; iters 105–121: + compare/genome/score/threat-model/oia; + example-harness; + list-templates)', async () => {
     const skills = await readdir(SKILLS_DIR);
     const expected = [
       'create-harness',      // iter 22
@@ -164,10 +164,19 @@ describe('.codex/skills/*/skill.toml manifests', () => {
       'verify-witness',      // iter 28
       'upgrade-harness',     // iter 49
       'diag-harness',        // iter 70
+      'compare-harnesses',   // iter 105 — wraps `harness compare a/ b/`
+      'repo-genome',         // iter 110 — wraps `harness genome <repo>`
+      'score-harness',       // iter 111 — wraps `harness score <path>`
+      'threat-model',        // iter 112 — wraps `harness threat-model <path>`
+      'oia-manifest',        // iter 121 — wraps `harness oia-manifest <path>` (ADR-034)
+      'example-harness',     // one-command picker over the live @metaharness/* example wrappers
       'list-templates',      // codex mirror of the plugin.json-declared Claude skill
     ];
     for (const s of expected) {
       expect(skills, `missing skill dir: ${s}`).toContain(s);
     }
+    // And nothing on disk is unpinned — a new skill must be added here too.
+    const onDisk = skills.filter(s => existsSync(join(SKILLS_DIR, s, 'skill.toml'))).sort();
+    expect(onDisk).toEqual([...expected].sort());
   });
 });
