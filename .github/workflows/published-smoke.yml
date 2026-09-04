@@ -45,6 +45,7 @@ concurrency:
 jobs:
   smoke-published-cli:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -138,6 +139,7 @@ jobs:
 
   smoke-published-lib:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -189,6 +191,7 @@ jobs:
     # `claude -p --plugin-dir <harness>` once iter-131 lands the
     # .claude-plugin/plugin.json template entry.
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -223,6 +226,7 @@ jobs:
     # while covering one host wrapper + one vertical wrapper + the
     # claude-code wrapper (the most-used path).
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with: { node-version: '20' }
@@ -263,6 +267,7 @@ jobs:
 
   notify-on-fail:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: [smoke-published-cli, smoke-published-lib, smoke-all-hosts, smoke-example-packages]
     if: failure() && github.event_name == 'schedule'
     steps:

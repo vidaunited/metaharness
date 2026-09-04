@@ -284,7 +284,7 @@ across Rust × 3 OS + WASM × 3 OS + Node 20+22 × 3 OS + Bench + pack+install �
 | Test suite | **2,254 passing** across 246 files (CI green on `main`) |
 | CI matrix | 16 jobs green |
 | Security pipeline | cargo-audit · cargo-deny · npm-audit · CodeQL · SBOM (SPDX-2.3) |
-| Publish pipeline | GCP WIF + 2 gates + 11 packages + IPFS pin |
+| Publish pipeline | GCP WIF + 2 gates + 12 packages + IPFS pin |
 | Agent Harness Studio | Live at <https://ruvnet.github.io/metaharness/> |
 
 ---

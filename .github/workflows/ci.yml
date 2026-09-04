@@ -135,7 +135,7 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - name: Install
-        run: npm ci || npm install
+        run: npm ci
       - name: TypeScript build
         run: npm run build
       - name: TypeScript tests
@@ -240,7 +240,7 @@ jobs:
           node-version: '20'
       - name: Build all packages
         run: |
-          npm ci || npm install
+          npm ci
           npm run build
       - name: npm pack every published package
         shell: bash
@@ -262,7 +262,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '20'
-      - run: npm ci || npm install
+      - run: npm ci
       - run: npm run build
       - name: Memory retrieval benchmark (iter 13)
         run: BENCH_ITEMS=200 BENCH_QUERIES=50 BENCH_OUT=./bench-report.json npm --prefix packages/bench run bench

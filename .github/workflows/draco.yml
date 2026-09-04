@@ -37,6 +37,7 @@ permissions:
 jobs:
   draco-deterministic:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -45,7 +46,7 @@ jobs:
       - name: Install + build (root, dependency-ordered — resolves @metaharness/* workspace deps)
         shell: bash
         run: |
-          npm ci || npm install
+          npm ci
           # The ordered root build compiles kernel → hosts → bench, so
           # host-bench.ts's @metaharness/host-* imports resolve. A bench-only build
           # fails (the @metaharness scope is unpublished — workspace symlinks only
@@ -83,6 +84,7 @@ jobs:
     # GitHub secrets. Skips cleanly when GCP WIF isn't configured (forks).
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
       id-token: write   # required for GCP Workload Identity Federation
@@ -140,7 +142,7 @@ jobs:
         env:
           OPENROUTER_API_KEY: ${{ steps.secrets.outputs.openrouter_api_key }}
         run: |
-          npm ci || npm install
+          npm ci
           npm run build
           TS=$(date +%Y%m%dT%H%M%SZ)
           # A small judged sample to control spend.
