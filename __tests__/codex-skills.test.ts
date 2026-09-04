@@ -154,7 +154,7 @@ describe('.codex/skills/*/skill.toml manifests', () => {
 
   // iter 70 — every harness-lifecycle skill that exists on disk now,
   // pinned so dropping one is visible in code review.
-  it('all 7 codex skills are present (iter 70: + diag-harness)', async () => {
+  it('all 8 codex skills are present (iter 70: + diag-harness; + list-templates)', async () => {
     const skills = await readdir(SKILLS_DIR);
     const expected = [
       'create-harness',      // iter 22
@@ -164,6 +164,7 @@ describe('.codex/skills/*/skill.toml manifests', () => {
       'verify-witness',      // iter 28
       'upgrade-harness',     // iter 49
       'diag-harness',        // iter 70
+      'list-templates',      // codex mirror of the plugin.json-declared Claude skill
     ];
     for (const s of expected) {
       expect(skills, `missing skill dir: ${s}`).toContain(s);
