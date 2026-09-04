@@ -146,7 +146,11 @@ async function main() {
 
   if (JSON_OUT) {
     process.stdout.write(JSON.stringify({ scripts, harnessSubcommands: subs, entryPoints: entry, examples, ci, health }, null, 2) + '\n');
-    process.exit(CHECK_HEALTH && !health?.ok ? 1 : 0);
+    // stdout on a pipe is async and macOS's pipe buffer is ~8 KB; process.exit()
+    // right after a large write truncates whatever hasn't flushed yet. Set
+    // exitCode and let the event loop drain naturally instead.
+    process.exitCode = CHECK_HEALTH && !health?.ok ? 1 : 0;
+    return;
   }
 
   const log = (...args) => process.stdout.write(args.join(' ') + '\n');
@@ -187,7 +191,10 @@ async function main() {
 
   if (health && !health.ok) {
     process.stderr.write(`\n[dev-toolkit] FAIL: missing scripts: ${health.missing.join(', ')}\n`);
-    process.exit(1);
+    // Follows the full plain-text report above (many stdout writes) — same
+    // async-pipe/exit() truncation risk as the --json path, so exitCode+return.
+    process.exitCode = 1;
+    return;
   }
 }
 

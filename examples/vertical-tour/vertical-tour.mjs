@@ -107,7 +107,10 @@ async function main() {
       host, count: templates.length, reports, totalMs: total,
       failed: failed.length, ok: failed.length === 0,
     }, null, 2) + '\n');
-    process.exit(failed.length === 0 ? 0 : 1);
+    // stdout on a pipe is async and macOS's pipe buffer is ~8 KB; process.exit()
+    // right after a large write truncates whatever hasn't flushed yet.
+    process.exitCode = failed.length === 0 ? 0 : 1;
+    return;
   }
 
   process.stdout.write('# Vertical Tour — output\n\n');
@@ -126,7 +129,10 @@ async function main() {
     for (const r of failed) {
       process.stderr.write(`  - ${r.template}${r.error ? ` (${r.error})` : ''}\n`);
     }
-    process.exit(1);
+    // Follows the full markdown table above (up to 17 verticals) — same
+    // async-pipe/exit() truncation risk as the JSON path above.
+    process.exitCode = 1;
+    return;
   }
   process.stderr.write(`\n[vertical-tour] DONE — ${reports.length}/${reports.length} verticals HEALTHY in ${total}ms\n`);
 }

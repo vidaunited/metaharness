@@ -85,7 +85,10 @@ async function main() {
     const failed = results.filter(r => !r.ok);
     if (failed.length > 0) {
       process.stderr.write(`\n[build-ordered] phase ${i + 1} failed: ${failed.map(r => r.pkg).join(', ')}\n`);
-      process.exit(1);
+      // Per-package build output above can exceed macOS's ~8 KB pipe buffer;
+      // process.exit() right after would truncate it before it flushes.
+      process.exitCode = 1;
+      return;
     }
   }
   const ms = Number((process.hrtime.bigint() - t0) / 1_000_000n);
