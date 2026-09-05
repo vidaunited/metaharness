@@ -88,10 +88,19 @@ while :; do
 done
 [ -n "$pkgdir" ] || exit 0
 
+# `timeout` is GNU coreutils: absent on macOS (CI's macos-latest job failed
+# with "timeout: command not found", exit 127). Fall back to Homebrew's
+# `gtimeout`, then to no wrapper — the hook-level 120 s timeout in
+# .claude/settings.json still bounds the run.
+if command -v timeout >/dev/null 2>&1; then to="timeout 90"
+elif command -v gtimeout >/dev/null 2>&1; then to="gtimeout 90"
+else to=""
+fi
+
 log=$(mktemp "${TMPDIR:-/tmp}/vitest-related.XXXXXX") || exit 0
 start=$(date +%s)
 (
-  cd "$pkgdir" && timeout 90 npx vitest related "$abs" --run --passWithNoTests
+  cd "$pkgdir" && $to npx vitest related "$abs" --run --passWithNoTests
 ) >"$log" 2>&1
 status=$?
 elapsed=$(( $(date +%s) - start ))
