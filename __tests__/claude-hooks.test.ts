@@ -12,7 +12,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 
 const ROOT = process.cwd();
 const HOOKS = join(ROOT, '.claude', 'hooks');
@@ -122,8 +122,22 @@ describe.skipIf(isWin)('.claude/hooks/vitest-related.sh', () => {
       expect(r.code).toBe(2);
       expect(r.stderr).toMatch(/vitest-related: FAILED in foo/);
       expect(r.stderr).toMatch(/expected -1 to be 3/);
+
+      // Same project reached through a symlinked path — macOS's tmpdir is one
+      // (/var/folders -> /private/var). vitest matches real paths, so before
+      // the hook canonicalised, `vitest related` related nothing and
+      // --passWithNoTests reported a failing workspace as ok (exit 0).
+      const link = join(await mkdtemp(join(tmpdir(), 'hook-vitest-link-')), 'proj');
+      await symlink(proj, link, 'dir');
+      try {
+        const viaLink = await runHook(VITEST, payload(join(link, 'packages', 'foo', 'src', 'add.ts')), { CLAUDE_PROJECT_DIR: link });
+        expect(viaLink.code).toBe(2);
+        expect(viaLink.stderr).toMatch(/expected -1 to be 3/);
+      } finally {
+        await rm(dirname(link), { recursive: true, force: true });
+      }
     } finally {
       await rm(proj, { recursive: true, force: true });
     }
-  }, 60_000);
+  }, 90_000);
 });

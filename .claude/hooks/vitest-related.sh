@@ -42,6 +42,13 @@ case "$f" in
   /*) abs=$f ;;
   *)  abs=$root/$f ;;
 esac
+# Canonicalise both sides (pwd -P resolves symlinks). macOS's temp dir is
+# /var/folders -> /private/var, and vitest matches REAL paths: handed the
+# symlinked path, `vitest related` related nothing and --passWithNoTests
+# turned a failing workspace into "ok" (CI macos-latest, 2026-09-05).
+root=$(cd "$root" 2>/dev/null && pwd -P) || exit 0
+absdir=$(cd "$(dirname "$abs")" 2>/dev/null && pwd -P) || exit 0
+abs=$absdir/$(basename "$abs")
 rel=${abs#"$root"/}
 [ "$rel" != "$abs" ] || exit 0          # not inside the project
 
