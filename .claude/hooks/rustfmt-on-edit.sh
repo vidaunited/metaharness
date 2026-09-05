@@ -42,8 +42,12 @@ case "$abs" in
 esac
 [ -f "$abs" ] || exit 0
 
-if ! command -v rustfmt >/dev/null 2>&1; then
-  echo "rustfmt-on-edit: rustfmt not installed; skipped $abs" >&2
+# Probe a WORKING rustfmt, not its presence on PATH: rustup installs a
+# `rustfmt` proxy for every toolchain, which exits non-zero with "component
+# not installed" when the component is absent (GitHub's ubuntu runner, Node
+# CI job). `command -v` said yes there and this hook wrongly returned 2.
+if ! rustfmt --version >/dev/null 2>&1; then
+  echo "rustfmt-on-edit: rustfmt not installed or not usable; skipped $abs" >&2
   exit 0
 fi
 

@@ -19,7 +19,9 @@ const HOOKS = join(ROOT, '.claude', 'hooks');
 const RUSTFMT = join(HOOKS, 'rustfmt-on-edit.sh');
 const VITEST = join(HOOKS, 'vitest-related.sh');
 const isWin = process.platform === 'win32';
-const hasRustfmt = !isWin && spawnSync('sh', ['-c', 'command -v rustfmt'], { stdio: 'ignore' }).status === 0;
+// `rustfmt --version`, not `command -v`: rustup's proxy is on PATH even when
+// the component is missing (GitHub ubuntu runner) and exits non-zero there.
+const hasRustfmt = !isWin && spawnSync('sh', ['-c', 'rustfmt --version'], { stdio: 'ignore' }).status === 0;
 
 interface Result { code: number; stdout: string; stderr: string }
 
