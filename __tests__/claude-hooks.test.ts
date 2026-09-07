@@ -34,6 +34,12 @@ function runHook(script: string, payload: string, env: Record<string, string> = 
     child.stderr.on('data', d => { stderr += d; });
     child.on('error', reject);
     child.on('close', code => resolve({ code: code ?? 1, stdout, stderr }));
+    // A hook that exits before reading stdin (e.g. METAHARNESS_SKIP_VITEST=1)
+    // closes the pipe under us, and the pending write surfaces as an unhandled
+    // EPIPE on child.stdin — vitest then fails the whole suite with "1 error"
+    // while every test passed (seen on Node 22 and Node 20 ubuntu, 2026-09-07).
+    // The assertions are on exit code and output, so a dropped payload is fine.
+    child.stdin.on('error', err => { if ((err as NodeJS.ErrnoException).code !== 'EPIPE') reject(err); });
     child.stdin.end(payload);
   });
 }
