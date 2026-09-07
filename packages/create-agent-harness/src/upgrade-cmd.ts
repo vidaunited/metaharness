@@ -18,6 +18,10 @@ import { planUpgrade, formatPlan, applyPlan } from './upgrade.js';
 import { asFileMap } from './walker.js';
 import { templateDir, renderHarnessFiles } from './index.js';
 import type { Host } from './index.js';
+import {
+  integrateFieldMemory,
+  validateFieldMemoryManifest,
+} from './field-memory-scaffold.js';
 import { createHash } from 'node:crypto';
 import type { TemplateVars } from './renderer.js';
 
@@ -32,6 +36,7 @@ interface ManifestShape {
   /** Generator version stamped by emptyManifest() (manifest.ts). */
   generator?: string;
   generator_version?: string;
+  field_memory?: unknown;
 }
 
 function sha256(s: string): string {
@@ -115,6 +120,22 @@ export async function upgradeCmd(args: string[]): Promise<SubcommandResult> {
     force: true,
     generatorVersion: manifest.generator ?? manifest.generator_version ?? '',
   });
+  if (manifest.field_memory !== undefined) {
+    const contractError = validateFieldMemoryManifest(manifest.field_memory);
+    if (contractError) {
+      lines.push(`  manifest field_memory block is invalid: ${contractError}; refusing to drop or reinterpret the overlay`);
+      return { code: 1, lines };
+    }
+    try {
+      // Reapply the exact opt-in overlay used by scaffold(). Without this,
+      // upgrade would treat the runtime dependency and bootstrap as drift,
+      // overwrite package.json/README, and orphan src/field-memory.ts.
+      integrateFieldMemory(rendered);
+    } catch (error) {
+      lines.push(`  field-memory overlay failed: ${error instanceof Error ? error.message : String(error)}`);
+      return { code: 1, lines };
+    }
+  }
   const upstreamFiles = asFileMap(rendered);
   const upstreamFingerprints: Record<string, string> = {};
   for (const [path, content] of Object.entries(upstreamFiles)) {
