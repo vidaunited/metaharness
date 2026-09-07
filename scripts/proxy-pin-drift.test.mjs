@@ -9,7 +9,7 @@ import {
   DIST_REPO, DRIFT_SEARCH, DRIFT_TITLES, PIN_SOURCE,
   applyDriftAction, checkReleaseSignature, classifyPin, compareVersions, decideDriftAction,
   findOpenDriftIssue, readPinnedPublicKey, readPinnedVersion, readReleaseBase,
-  resolveLatestRelease, run, verifyManifestSignature,
+  repoAcceptsIssues, resolveLatestRelease, run, verifyManifestSignature,
 } from './proxy-pin-drift.mjs';
 
 let pass = 0;
@@ -265,6 +265,67 @@ await at('run() closes the stale issue once the pin catches up — the #174 end 
 
   assert.match(result.summary, /state=current/);
   assert.match(result.summary, /closed #174/);
+});
+
+// ── a repo that cannot take an issue (forks: issues disabled by default) ──
+
+const fakeReporter = () => {
+  const r = { summaries: [], errors: [] };
+  r.summary = (md) => r.summaries.push(md);
+  r.error = (msg) => r.errors.push(msg);
+  return r;
+};
+
+t('repoAcceptsIssues is tri-state: true / false / null on API failure', () => {
+  assert.equal(repoAcceptsIssues(fakeGh({ 'api repos/o/r': { status: 0, stdout: 'true\n', stderr: '' } }), 'o/r'), true);
+  assert.equal(repoAcceptsIssues(fakeGh({ 'api repos/o/r': { status: 0, stdout: 'false\n', stderr: '' } }), 'o/r'), false);
+  assert.equal(repoAcceptsIssues(fakeGh({ 'api repos/o/r': { status: 1, stdout: '', stderr: 'boom' } }), 'o/r'), null);
+});
+
+await at('run() on a drift with issues DISABLED: summary + annotation, no issue calls, and NOT ok (red run)', async () => {
+  const gh = fakeGh({
+    'release view': { status: 0, stdout: 'v0.7.3\n', stderr: '' },
+    'api repos/o/r': { status: 0, stdout: 'false\n', stderr: '' },
+  });
+  const reporter = fakeReporter();
+  const fetcher = async (url) => (url.endsWith('.sig') ? Buffer.from(SIG) : SUMS);
+  const result = await run({ repo: 'o/r', gh, fetcher, source: SYNTHETIC_SOURCE, reporter });
+
+  assert.equal(result.ok, false, 'a drift must be a red run when no issue can carry it');
+  assert.match(result.summary, /issue=skipped \(has_issues=false\)/);
+  assert.equal(gh.ran('issue create').length + gh.ran('issue list').length + gh.ran('issue comment').length, 0);
+  assert.equal(reporter.summaries.length, 1);
+  assert.match(reporter.summaries[0], new RegExp(`^## ${DRIFT_TITLES.behind}`));
+  assert.deepEqual(reporter.errors, ['META_PROXY_VERSION=0.7.2 vs cognitum-one/meta-proxy-dist v0.7.3 (behind)']);
+});
+
+await at('run() on a drift with issues ENABLED still files the issue, still reports, still NOT ok', async () => {
+  const gh = fakeGh({
+    'release view': { status: 0, stdout: 'v0.7.3\n', stderr: '' },
+    'api repos/o/r': { status: 0, stdout: 'true\n', stderr: '' },
+    'issue list': { status: 0, stdout: '[]', stderr: '' },
+  });
+  const reporter = fakeReporter();
+  const fetcher = async (url) => (url.endsWith('.sig') ? Buffer.from(SIG) : SUMS);
+  const result = await run({ repo: 'o/r', gh, fetcher, source: SYNTHETIC_SOURCE, reporter });
+
+  assert.equal(result.ok, false);
+  assert.equal(gh.ran('issue create').length, 1);
+  assert.equal(reporter.summaries.length, 1);
+  assert.equal(reporter.errors.length, 1);
+});
+
+await at('run() on a current pin is ok (green) and writes no summary or annotation', async () => {
+  const gh = fakeGh({
+    'release view': { status: 0, stdout: 'v0.7.2\n', stderr: '' },
+    'api repos/o/r': { status: 0, stdout: 'false\n', stderr: '' },
+  });
+  const reporter = fakeReporter();
+  const fetcher = async (url) => (url.endsWith('.sig') ? Buffer.from(SIG) : SUMS);
+  const result = await run({ repo: 'o/r', gh, fetcher, source: SYNTHETIC_SOURCE, reporter });
+
+  assert.equal(result.ok, true);
+  assert.equal(reporter.summaries.length + reporter.errors.length, 0);
 });
 
 console.log(`\n${pass} assertions passed.`);

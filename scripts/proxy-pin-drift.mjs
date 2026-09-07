@@ -27,7 +27,7 @@
 // and network calls are injected so the tests never touch either.
 import { createPublicKey, verify as verifyEd25519 } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 export const PIN_SOURCE = 'packages/create-agent-harness/src/meta-proxy.ts';
@@ -266,7 +266,35 @@ export function applyDriftAction(gh, repo, decision, existing) {
   return `updated #${existing.number}`;
 }
 
-export async function run({ repo, gh = defaultGh, fetcher = defaultFetcher, source } = {}) {
+/**
+ * Forks have issues disabled by default. Against such a repo every `gh issue …` call fails, and
+ * before this check the watcher reported "opened a new drift issue" for an issue it never opened
+ * (vidaunited/metaharness run 34111941571, 2026-09-07). Tri-state like the key checks: null means
+ * the API could not be read, and we then still TRY the issue path rather than silently skipping.
+ */
+export function repoAcceptsIssues(gh, repo) {
+  const result = gh(['api', `repos/${repo}`, '--jq', '.has_issues']);
+  if (result.status !== 0) return null;
+  const value = result.stdout.trim();
+  return value === 'true' ? true : value === 'false' ? false : null;
+}
+
+/**
+ * Where a drift is reported besides the issue tracker: the job summary and an ::error annotation.
+ * These work on every repo, issues or not, and they are what makes a red run readable. Injected so
+ * the tests never touch the real GITHUB_STEP_SUMMARY.
+ */
+export const defaultReporter = {
+  summary(markdown) {
+    const path = process.env.GITHUB_STEP_SUMMARY;
+    if (path) appendFileSync(path, `${markdown}\n`);
+  },
+  error(message) {
+    console.log(`::error title=meta-proxy pin drift::${message}`);
+  },
+};
+
+export async function run({ repo, gh = defaultGh, fetcher = defaultFetcher, source, reporter = defaultReporter } = {}) {
   const text = source ?? readFileSync(PIN_SOURCE, 'utf8');
   const pinned = readPinnedVersion(text);
   const publicKeyPem = readPinnedPublicKey(text);
@@ -285,9 +313,20 @@ export async function run({ repo, gh = defaultGh, fetcher = defaultFetcher, sour
     : pinnedKeyOk;
 
   const decision = decideDriftAction({ pinned, latest, state, pinnedKeyOk, latestKeyOk });
-  const outcome = applyDriftAction(gh, repo, decision, findOpenDriftIssue(gh, repo));
+
+  // A drift is reported where it can always be seen FIRST — the job summary and an annotation —
+  // and the run is red. The issue is a convenience on top, only attempted where the repo can
+  // take one; a failed `gh issue create` used to be the whole report.
+  if (decision.action === 'open') {
+    reporter.summary(`## ${decision.title}\n\n${decision.body}`);
+    reporter.error(`META_PROXY_VERSION=${pinned} vs ${DIST_REPO} v${latest} (${state})`);
+  }
+  const acceptsIssues = repoAcceptsIssues(gh, repo);
+  const outcome = acceptsIssues === false
+    ? 'issue=skipped (has_issues=false) — the red run and the job summary are the alarm'
+    : applyDriftAction(gh, repo, decision, findOpenDriftIssue(gh, repo));
   return {
-    ok: true,
+    ok: decision.action !== 'open',
     summary: `pinned=${pinned} latest=${latest} state=${state} pinnedKey=${pinnedKeyOk} → ${outcome}`,
   };
 }
@@ -299,7 +338,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     process.exit(1);
   }
   run({ repo })
-    .then((result) => console.log(result.summary))
+    .then((result) => {
+      console.log(result.summary);
+      if (!result.ok) process.exitCode = 1; // a drift is a red run, whatever the issue tracker did
+    })
     .catch((error) => {
       console.error(error instanceof Error ? error.message : String(error));
       process.exit(1);
