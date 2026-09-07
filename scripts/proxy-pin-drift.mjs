@@ -323,7 +323,7 @@ export async function run({ repo, gh = defaultGh, fetcher = defaultFetcher, sour
   }
   const acceptsIssues = repoAcceptsIssues(gh, repo);
   const outcome = acceptsIssues === false
-    ? 'issue=skipped (has_issues=false) — the red run and the job summary are the alarm'
+    ? `issue=skipped (has_issues=false)${decision.action === 'open' ? ' — the red run and the job summary are the alarm' : ''}`
     : applyDriftAction(gh, repo, decision, findOpenDriftIssue(gh, repo));
   return {
     ok: decision.action !== 'open',
