@@ -1,0 +1,56 @@
+# upstream-drift — how far is this fork behind ruvnet/metaharness?
+#
+# The fork drifted 59 commits (0.4.6 vs a published 0.4.16) before anyone
+# measured it on 2026-09-07 (#7). This asks GitHub's compare API once a week,
+# writes the answer to the job summary, and goes RED past a threshold. Same
+# reporting contract as proxy-pin-drift: this repo has issues disabled, so the
+# red run and the summary are the alarm, not an issue.
+name: upstream-drift
+
+on:
+  schedule:
+    - cron: '41 5 * * 1'   # Mondays 05:41 UTC, after proxy-pin-drift's 05:23
+  workflow_dispatch:
+    inputs:
+      threshold:
+        description: 'Commits behind upstream that turn the run red'
+        required: false
+        default: '20'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Compare main to ruvnet/metaharness main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM: ruvnet/metaharness
+          THRESHOLD: ${{ inputs.threshold || '20' }}
+        run: |
+          # compare/<upstream-owner>:main...main — behind_by counts commits on upstream not here.
+          OWNER="${GITHUB_REPOSITORY%%/*}"
+          JSON=$(gh api "repos/$UPSTREAM/compare/main...$OWNER:main" --jq '{ahead_by, behind_by}' 2>/dev/null || true)
+          if [ -z "$JSON" ]; then
+            echo "could not read the compare API — skipping (not a drift)"; exit 0
+          fi
+          AHEAD=$(echo "$JSON" | jq -r '.ahead_by'); BEHIND=$(echo "$JSON" | jq -r '.behind_by')
+          case "$BEHIND" in ''|*[!0-9]*) echo "unreadable compare payload: $JSON — skipping (not a drift)"; exit 0;; esac
+          echo "ahead=$AHEAD behind=$BEHIND threshold=$THRESHOLD"
+          {
+            echo "## upstream-drift — fork vs $UPSTREAM"
+            echo
+            echo "| ahead (fork-only commits) | behind (upstream commits not here) | threshold |"
+            echo "|---:|---:|---:|"
+            echo "| $AHEAD | $BEHIND | $THRESHOLD |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$BEHIND" -ge "$THRESHOLD" ]; then
+            echo "::error title=upstream drift::fork is $BEHIND commits behind $UPSTREAM (threshold $THRESHOLD) — sync due"
+            echo "sync due: merge $UPSTREAM main into main (see PR #7 for the last one)" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "✓ within threshold"
