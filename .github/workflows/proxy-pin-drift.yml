@@ -42,9 +42,21 @@ jobs:
             echo "rotated), then bump \`META_PROXY_VERSION\` in"
             echo "\`packages/create-agent-harness/src/meta-proxy.ts\` and publish the CLI."
           } > "$BODY_FILE"
-          EXISTING=$(gh issue list --repo "$GITHUB_REPOSITORY" --search "$TITLE in:title" --state open --json number --jq '.[0].number' 2>/dev/null || true)
-          if [ -n "$EXISTING" ]; then
-            gh issue comment "$EXISTING" --repo "$GITHUB_REPOSITORY" --body-file "$BODY_FILE"
+          # The drift must be visible even when this repo cannot take an issue
+          # (forks have issues disabled by default; run 34111941571 died here on
+          # `gh issue create` and reported NOTHING). Summary + annotation first,
+          # issue second, and a drift is always a red run.
+          { echo "## $TITLE"; echo; cat "$BODY_FILE"; } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error title=meta-proxy pin drift::META_PROXY_VERSION=$PINNED is behind meta-proxy-dist v$LATEST"
+          HAS_ISSUES=$(gh api "repos/$GITHUB_REPOSITORY" --jq .has_issues 2>/dev/null || echo unknown)
+          if [ "$HAS_ISSUES" = "true" ]; then
+            EXISTING=$(gh issue list --repo "$GITHUB_REPOSITORY" --search "$TITLE in:title" --state open --json number --jq '.[0].number' 2>/dev/null || true)
+            if [ -n "$EXISTING" ]; then
+              gh issue comment "$EXISTING" --repo "$GITHUB_REPOSITORY" --body-file "$BODY_FILE" && echo "issue=commented #$EXISTING"
+            else
+              gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --label bug --body-file "$BODY_FILE" && echo "issue=created"
+            fi
           else
-            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --label bug --body-file "$BODY_FILE"
+            echo "issue=skipped (has_issues=$HAS_ISSUES) — the red run and the job summary are the alarm"
           fi
+          exit 1
