@@ -227,6 +227,27 @@ while their identity-bound checkpoint and timing fields differed as expected.
 The checked current-tree result is stored at
 `packages/arc-agi-3-bench/results/long-horizon-v1.json`.
 
+## Consequences
+
+* No improved-ARC-performance claim is permitted until the five-condition claim
+  gate passes on the 25 public games. Until then every result is labelled a
+  mechanism test or a paired smoke test, and better action efficiency alone is
+  not evidence that the underlying model became more intelligent.
+* The synthetic mechanism gate passes, but the fixture makes diversification,
+  receipted novelty, and blocking supervision causally useful by construction.
+  It is not an official ARC score.
+* The live evidence is mixed and does not clear the official gate. The first
+  paired smoke showed no score gain and a noisy, roughly 21.7 percent slower
+  AVO arm. The actor-declared-clean rerun favored AVO but covers one game, has
+  no clustered interval, lacks model usage, ran outside competition mode, and
+  falls short of the required ten-point delta.
+* The long-horizon and durability probes validate completion, scaling, and
+  checkpoint restoration only; they are not performance or model-intelligence
+  estimates.
+* The legacy `ArcController` stays available, so the new loop can be rolled
+  back as described below without changing the official Python bridge or
+  receipt format.
+
 ## Rollback
 
 The existing `ArcController` remains available for legacy callers. The new loop

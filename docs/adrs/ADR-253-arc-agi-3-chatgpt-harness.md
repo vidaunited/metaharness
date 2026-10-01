@@ -262,6 +262,32 @@ environment resume therefore requires the bridge process to remain alive or an
 environment adapter that implements `resume`; full online process-crash recovery
 is not claimed. A normal shutdown still closes every owned scorecard.
 
+## Consequences
+
+* Until the frozen official gate passes, this is a custom community harness
+  with no score claim. ARC stays outside the AVO ship gate, ADR-251 is
+  unchanged, and no AVO-class or 100% claim is permitted from this
+  implementation.
+* MetaHarness, not the ChatGPT model, is authoritative for environment state,
+  memory, policy, receipts, and supervision. Compare-and-swap actions and the
+  hash-chained receipts make every environment mutation auditable, at the cost
+  of an operator-supplied append-only or WORM evidence service for accepted
+  official evidence; any failed journal or anchor write fails reconciliation
+  closed.
+* Results are bounded by what the server can attest. It cannot prove or pin the
+  ChatGPT model chosen in the UI, so the UI model label and prompt hash are
+  evidence rather than attestation; a fixed-model benchmark needs a separate
+  pinned API runner, and ChatGPT UI and API transports are never combined in
+  one result.
+* Recovery is bounded by the live bridge process: memory, receipts, and
+  checkpoints survive context rotation and MCP reconnection, but full online
+  process-crash recovery is not claimed.
+* Remote deployment depends on an external OAuth 2.1 authorization server and an
+  injected access-token verifier. The residual risks (session theft, prompt
+  injection through untrusted metadata, subprocess drift from the pinned SDK,
+  accidental transfer of game-specific memory, and UI model routing changes)
+  are mitigated, not eliminated.
+
 ## References
 
 * [ARC-AGI-3 methodology](https://docs.arcprize.org/methodology)

@@ -45,6 +45,10 @@ describe('RELEASE_ORDER', () => {
       'vertical-trading',
       'field-memory',
       'create-agent-harness',
+      // @metaharness/avo was appended after create-agent-harness (#215) and
+      // publishes last, from the exact signed release tarball
+      // (AVO_RELEASE_TARBALL — ADR-276).
+      'avo',
     ]);
   });
 

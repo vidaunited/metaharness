@@ -88,7 +88,11 @@ describe('.github/workflows/*.yml', () => {
 
   it('scripts/publish-workspace.mjs publishes with --provenance --access public', async () => {
     const script = await readFile(join(SCRIPTS, 'publish-workspace.mjs'), 'utf-8');
-    expect(script).toMatch(/\['publish',\s*'--provenance',\s*'--access',\s*'public'\]/);
+    // publishOne() builds the argv incrementally so the AVO release tarball
+    // can sit between `publish` and the flags: `['publish']`, optionally the
+    // tarball, then `--provenance --access public`. Pin both halves.
+    expect(script).toMatch(/const args = \['publish'\];/);
+    expect(script).toMatch(/args\.push\('--provenance',\s*'--access',\s*'public'\);/);
   });
 
   it('publish.yml runs marketplace-entry.mjs AFTER the workspace publish step', async () => {
@@ -107,10 +111,12 @@ describe('.github/workflows/*.yml', () => {
       expect(RELEASE_ORDER, `RELEASE_ORDER missing ${host}`).toContain(host);
     }
     // Dependency order: the kernel + sdk ship before any host adapter, and
-    // create-agent-harness (which depends on all of them) ships last.
+    // create-agent-harness (which depends on all of them) ships after every
+    // one of them. The only entry allowed after it is `avo`, which publishes
+    // from the exact signed release tarball (ADR-276) — so the tail is pinned.
     expect(RELEASE_ORDER[0]).toBe('kernel-js');
     expect(RELEASE_ORDER.indexOf('sdk')).toBeLessThan(RELEASE_ORDER.indexOf('host-claude-code'));
-    expect(RELEASE_ORDER[RELEASE_ORDER.length - 1]).toBe('create-agent-harness');
+    expect(RELEASE_ORDER.slice(-2)).toEqual(['create-agent-harness', 'avo']);
     // A stale entry fails the tag run with "release set is stale" — catch it here.
     for (const dir of RELEASE_ORDER) {
       const pkgPath = join(process.cwd(), 'packages', dir, 'package.json');
